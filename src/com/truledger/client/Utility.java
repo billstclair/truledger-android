@@ -2,6 +2,8 @@ package com.truledger.client;
 
 import java.math.BigInteger;
 
+import org.spongycastle.util.encoders.Base64;
+
 public class Utility {
   public static String bin2hex(int bin) {
 	  return bin2hex(BigInteger.valueOf(bin));
@@ -37,5 +39,28 @@ public class Utility {
 		  out.append(pairs[b]);
 	  }
 	  return out.toString();
+  }
+  
+  public static String base64Encode(byte buf[], int columns) {
+	  byte[] buf64 = Base64.encode(buf);
+	  int len = buf64.length;
+	  int newlines = (columns == 0) ? 0 : (len - 1) / columns;
+	  if (newlines == 0) columns = len+1;
+	  char[] chars = new char[len + newlines];
+	  int linecnt = columns;
+	  int j = 0;
+	  for (int i=0; i<len; i++) {
+		  if (linecnt == 0) {
+			  chars[j++] = '\n';
+			  linecnt = columns;
+		  }
+		  chars[j++] = (char)buf64[i];
+		  linecnt--;
+	  }
+	  return String.valueOf(chars);
+  }
+  
+  public static String base64Encode(byte buf[]) {
+	  return base64Encode(buf, 64);
   }
 }

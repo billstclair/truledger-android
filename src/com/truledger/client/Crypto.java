@@ -13,6 +13,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
+import java.security.Signature;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.RSAKeyGenParameterSpec;
 
@@ -81,6 +82,10 @@ public class Crypto {
 		Reader keyReader = new StringReader(key);
 		PEMReader reader = new PEMReader(keyReader);
 		return (PublicKey)reader.readObject();
+		}
+
+	public PublicKey decodeRSAPublicKey(PublicKey key) {
+		return key;
 	}
 	
 	public String encodeRSAPublicKey(PublicKey key) throws IOException {
@@ -124,6 +129,20 @@ public class Crypto {
 	
 	public String digest(String str, String algorithm) {
 		return this.digest(str.getBytes(), algorithm);
+	}
+	
+	String sign(String data, KeyPair key) {
+		try {
+			Signature sig = Signature.getInstance("SHA1withRSA");
+			sig.initSign(key.getPrivate());
+			sig.update(data.getBytes());
+			byte[] signature = sig.sign();
+			String res = Utility.base64Encode(signature);
+			return res;
+		} catch (Exception e) {
+			System.out.println(e.toString());
+			return null;
+		}
 	}
 
 	public static double getVer() {

@@ -51,8 +51,12 @@ public class TruledgerActivity extends Activity {
 			"Ap/YgwWkL1gs7DhtZjpKGH7Sji2WPKtuHzHFKKXWLmryoWII8CwAdlesg6Gj+fx0\n" +
 			"-----END RSA PRIVATE KEY-----\n";
 	String password = "admin";
-	String privstr, pubstr, genstr, sha1, sha256;
+	String privstr, pubstr, genstr, sha1, sha256, sig;
 
+	public static void println(String str) {
+		System.out.println(str);
+	}
+	
     /** Called when the activity is first created. */
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -76,8 +80,15 @@ public class TruledgerActivity extends Activity {
         	//this.genstr = genstr;
         	String sha1 = crypto.sha1(privstr);
         	String sha256 = crypto.sha256(privstr);
+        	String sig = crypto.sign("foo", privkey);
+        	this.sig = sig;
         	this.sha1 = sha1;
         	this.sha256 = sha256;
+        	println("privstr: " + privstr);
+        	println("pubstr: " + pubstr);
+        	println("sha1: " + sha1);
+        	println("sha256: " + sha256);
+        	println("sig: " + sig);
         } catch (IOException e) {}
     }
 }
