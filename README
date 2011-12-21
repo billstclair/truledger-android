@@ -1,0 +1,7 @@
+This is a port of the Truledger client to Android.
+
+http://truledger.com/
+
+Right now, I'm just making sure I can get the crypto working. Once
+that's done, I'll add the database and the HTTP client and the user
+interface.
