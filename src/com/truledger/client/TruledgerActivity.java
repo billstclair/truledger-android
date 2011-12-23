@@ -52,7 +52,7 @@ public class TruledgerActivity extends Activity {
 			"Ap/YgwWkL1gs7DhtZjpKGH7Sji2WPKtuHzHFKKXWLmryoWII8CwAdlesg6Gj+fx0\n" +
 			"-----END RSA PRIVATE KEY-----\n";
 	String password = "admin";
-	String privstr, pubstr, genstr, sha1, sha256, sig;
+	String privstr, pubstr, genstr, sha1, sha256, sig, cipherText, plainText;
     boolean sigok, sigbad;
 
 	public static void println(String str) {
@@ -85,11 +85,15 @@ public class TruledgerActivity extends Activity {
         	String sig = crypto.sign("foo", privkey);
         	boolean sigok = crypto.verify("foo", pubkey, sig);
         	boolean sigbad = crypto.verify("foo", pubkey, "badsig");
+        	String cipherText = crypto.RSAPubkeyEncrypt("Hello", pubkey);
+        	String plainText = crypto.RSAPrivkeyDecrypt(cipherText, privkey);
         	this.sig = sig;
         	this.sigok = sigok;
         	this.sigbad = sigbad;
         	this.sha1 = sha1;
         	this.sha256 = sha256;
+        	this.cipherText = cipherText;
+        	this.plainText = plainText;
         	println("privstr: " + privstr);
         	println("pubstr: " + pubstr);
         	println("sha1: " + sha1);
@@ -97,6 +101,9 @@ public class TruledgerActivity extends Activity {
         	println("sig: " + sig);
         	println("sigok: " + sigok);
         	println("sigbad: " + sigbad);
+        	println("cipherText: " + cipherText);
+        	println("plainText: " + plainText);
+        	
         } catch (IOException e) {}
     }
 }
