@@ -33,49 +33,49 @@ public class Crypto {
 	private static double ver;
 	public static Exception lastErr;
 
-    public Crypto() {
-    	if (!isProviderInitialized) {
-            Security.addProvider(new BouncyCastleProvider());
-            random = new SecureRandom();
-            double ver = Security.getProvider("SC").getVersion();
-            setVer(ver);
-            isProviderInitialized = true;
-    	}
-    }
-    
-    public KeyPair RSAGenerateKey(int keysize, BigInteger exponent) {
-    	KeyPairGenerator kpg;
-    	try {
-    		kpg = KeyPairGenerator.getInstance("RSA");
-    	} catch (NoSuchAlgorithmException e) {
-    		return null;
-    	}
-    	AlgorithmParameterSpec spec = new RSAKeyGenParameterSpec(keysize, exponent);
-    	try {
-    		kpg.initialize(spec, random);
-    	} catch (InvalidAlgorithmParameterException e) {
-    		return null;
-    	}
-    	return kpg.genKeyPair();
-    }
-    
-    final public static BigInteger defaultExponent = BigInteger.valueOf(65537);
-    
-    public KeyPair RSAGenerateKey(int keysize) {
-    	return RSAGenerateKey(keysize, defaultExponent);
-    }
-    
-	public KeyPair decodeRSAPrivateKey(String key, final String password) throws IOException {
-	  Reader keyReader = new StringReader(key);
-	  PasswordFinder pwd = new PasswordFinder() {
-		  public char[] getPassword() {
-			  return password.toCharArray();
-		  }
-	  };
-	  PEMReader reader = new PEMReader(keyReader, pwd);
-	  return (KeyPair)reader.readObject();
+	public Crypto() {
+		if (!isProviderInitialized) {
+			Security.addProvider(new BouncyCastleProvider());
+			random = new SecureRandom();
+			double ver = Security.getProvider("SC").getVersion();
+			setVer(ver);
+			isProviderInitialized = true;
+		}
 	}
-	
+
+	public KeyPair RSAGenerateKey(int keysize, BigInteger exponent) {
+		KeyPairGenerator kpg;
+		try {
+			kpg = KeyPairGenerator.getInstance("RSA");
+		} catch (NoSuchAlgorithmException e) {
+			return null;
+		}
+		AlgorithmParameterSpec spec = new RSAKeyGenParameterSpec(keysize, exponent);
+		try {
+			kpg.initialize(spec, random);
+		} catch (InvalidAlgorithmParameterException e) {
+			return null;
+		}
+		return kpg.genKeyPair();
+	}
+
+	final public static BigInteger defaultExponent = BigInteger.valueOf(65537);
+
+	public KeyPair RSAGenerateKey(int keysize) {
+		return RSAGenerateKey(keysize, defaultExponent);
+	}
+
+	public KeyPair decodeRSAPrivateKey(String key, final String password) throws IOException {
+		Reader keyReader = new StringReader(key);
+		PasswordFinder pwd = new PasswordFinder() {
+			public char[] getPassword() {
+				return password.toCharArray();
+			}
+		};
+		PEMReader reader = new PEMReader(keyReader, pwd);
+		return (KeyPair)reader.readObject();
+	}
+
 	public String encodeRSAPrivateKey(KeyPair key, final String password) throws IOException {
 		StringWriter keyWriter = new StringWriter();
 		PEMWriter writer = new PEMWriter(keyWriter);
@@ -83,17 +83,17 @@ public class Crypto {
 		writer.flush();
 		return keyWriter.getBuffer().toString();
 	}
-	
+
 	public PublicKey decodeRSAPublicKey(String key) throws IOException {
 		Reader keyReader = new StringReader(key);
 		PEMReader reader = new PEMReader(keyReader);
 		return (PublicKey)reader.readObject();
-		}
+	}
 
 	public PublicKey decodeRSAPublicKey(PublicKey key) {
 		return key;
 	}
-	
+
 	public String encodeRSAPublicKey(PublicKey key) throws IOException {
 		StringWriter keyWriter = new StringWriter();
 		PEMWriter writer = new PEMWriter(keyWriter);
@@ -101,27 +101,27 @@ public class Crypto {
 		writer.flush();
 		return keyWriter.getBuffer().toString();
 	}
-	
+
 	public String encodeRSAPublicKey(KeyPair key) throws IOException {
 		return encodeRSAPublicKey(key.getPublic());
 	}
-	
+
 	public String sha1(byte[] buf) {
 		return this.digest(buf, "SHA1");
 	}
-	
+
 	public String sha1(String str) {
 		return this.digest(str, "SHA1");
 	}
-	
+
 	public String sha256(byte[] buf) {
 		return this.digest(buf, "SHA256");
 	}
-	
+
 	public String sha256(String str) {
 		return this.digest(str, "SHA256");
 	}
-	
+
 	public String digest(byte[] buf, String algorithm) {
 		MessageDigest dig;
 		try {
@@ -132,17 +132,17 @@ public class Crypto {
 		dig.update(buf);
 		return Utility.bin2hex(dig.digest());
 	}
-	
+
 	public String digest(String str, String algorithm) {
 		return this.digest(str.getBytes(), algorithm);
 	}
-	
+
 	public String sign(String data, KeyPair key) {
 		return this.sign(data, key.getPrivate());
 	}
-	
+
 	final private static String SIGNING_ALGORITHM = "SHA1withRSA";
-	
+
 	String sign(String data, PrivateKey key) {
 		try {
 			Signature signer = Signature.getInstance(SIGNING_ALGORITHM);
@@ -156,7 +156,7 @@ public class Crypto {
 			return null;
 		}
 	}
-	
+
 	public boolean verify(String data, PublicKey key, String signature) {
 		try {
 			Signature signer = Signature.getInstance(SIGNING_ALGORITHM);
@@ -168,71 +168,71 @@ public class Crypto {
 			return false;
 		}
 	}
-	
+
 	public int getKeyBits(KeyPair key) {
 		return this.getKeyBits(key.getPrivate());
 	}
-	
+
 	public int getKeyBits(PrivateKey key) {
 		return ((RSAKey)key).getModulus().bitLength();
 	}
-	
+
 	public int getKeyBits(PublicKey key) {
 		return ((RSAKey)key).getModulus().bitLength();
 	}
-	
+
 	private static Cipher getRSACipher () throws NoSuchAlgorithmException, NoSuchPaddingException {
 		return Cipher.getInstance("RSA/None/PKCS1Padding");
 	}
-	
+
 	public String RSAPubkeyEncrypt(String plainText, PublicKey key) {
 		try {
-		  Cipher cipher = getRSACipher();
-		  cipher.init(Cipher.ENCRYPT_MODE, key, random);
-		  byte[] plainBytes = plainText.getBytes();
-		  int blockSize = cipher.getBlockSize();
-		  int outputSize = cipher.getOutputSize(blockSize);
-		  int inLen = plainBytes.length;
-		  int fullBlockCount = inLen / blockSize;
-		  int outLen = fullBlockCount * outputSize;
-		  boolean needExtraBlock = false;
-		  if (fullBlockCount * blockSize < inLen) outLen += outputSize;
-		  else {
-			  for (int i=inLen-1; i>= 0; --i) {
-				  int b = (int)plainBytes[i] & 0xff;
-				  if (b == 0x80) {
-					  if (i == inLen-1) break;
-					  needExtraBlock = true;
-					  outLen += outputSize;
-					  break;
-				  }
-				  if (b != 0) break;
-			  }
-		  }
-		  byte[] cipherBytes = new byte[outLen];
-		  int inOffset = 0;
-		  int outOffset = 0;
-		  for (int i=0; i<fullBlockCount; i++) {
-			  outOffset += cipher.update(plainBytes, inOffset, blockSize, cipherBytes, outOffset);
-			  inOffset += blockSize;
-		  }
-		  if (inOffset < inLen || needExtraBlock) {
-			  byte[] lastBlock = new byte[blockSize];
-			  int cnt = inLen - inOffset;
-			  for (int i=0; i<cnt; i++) {
-				  lastBlock[i] = plainBytes[inOffset++];
-			  }
-			  lastBlock[cnt] = (byte)0x80;
-			  for (int i=cnt+1; i<blockSize; i++) lastBlock[i] = 0;
-			  outOffset += cipher.update(lastBlock, 0, blockSize, cipherBytes, outOffset);
-		  }
-		  cipher.doFinal(plainBytes, 0, 0, cipherBytes, outOffset);
-		  return Utility.base64Encode(cipherBytes);
+			Cipher cipher = getRSACipher();
+			cipher.init(Cipher.ENCRYPT_MODE, key, random);
+			byte[] plainBytes = plainText.getBytes();
+			int blockSize = cipher.getBlockSize();
+			int outputSize = cipher.getOutputSize(blockSize);
+			int inLen = plainBytes.length;
+			int fullBlockCount = inLen / blockSize;
+			int outLen = fullBlockCount * outputSize;
+			boolean needExtraBlock = false;
+			if (fullBlockCount * blockSize < inLen) outLen += outputSize;
+			else {
+				for (int i=inLen-1; i>= 0; --i) {
+					int b = (int)plainBytes[i] & 0xff;
+					if (b == 0x80) {
+						if (i == inLen-1) break;
+						needExtraBlock = true;
+						outLen += outputSize;
+						break;
+					}
+					if (b != 0) break;
+				}
+			}
+			byte[] cipherBytes = new byte[outLen];
+			int inOffset = 0;
+			int outOffset = 0;
+			for (int i=0; i<fullBlockCount; i++) {
+				outOffset += cipher.update(plainBytes, inOffset, blockSize, cipherBytes, outOffset);
+				inOffset += blockSize;
+			}
+			if (inOffset < inLen || needExtraBlock) {
+				byte[] lastBlock = new byte[blockSize];
+				int cnt = inLen - inOffset;
+				for (int i=0; i<cnt; i++) {
+					lastBlock[i] = plainBytes[inOffset++];
+				}
+				lastBlock[cnt] = (byte)0x80;
+				for (int i=cnt+1; i<blockSize; i++) lastBlock[i] = 0;
+				outOffset += cipher.update(lastBlock, 0, blockSize, cipherBytes, outOffset);
+			}
+			cipher.doFinal(plainBytes, 0, 0, cipherBytes, outOffset);
+			return Utility.base64Encode(cipherBytes);
 		} catch (Exception e) {
 			return null;
 		}
 	}
-	
+
 	public String RSAPrivkeyDecrypt(String cipherText, PrivateKey key) {
 		try {
 			Cipher cipher = getRSACipher();
@@ -269,7 +269,7 @@ public class Crypto {
 			return null;
 		}
 	}
-	
+
 	public String RSAPrivkeyDecrypt(String cipherText, KeyPair key) {
 		return this.RSAPrivkeyDecrypt(cipherText, key.getPrivate());
 	}

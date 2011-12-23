@@ -56,47 +56,47 @@ public class TruledgerActivity extends Activity {
 	public static void println(String str) {
 		System.out.println(str);
 	}
-	
-    /** Called when the activity is first created. */
-    @Override
-    public void onCreate(Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.main);
-        
-        Crypto crypto = new Crypto();
-        KeyPair privkey;
-        String privstr, pubstr;
-        //String genstr;
-        try {
-        	privkey = crypto.decodeRSAPrivateKey(key, password);
-        	privstr = crypto.encodeRSAPrivateKey(privkey, password);
-        	pubstr = crypto.encodeRSAPublicKey(privkey);
-        	PublicKey pubkey = crypto.decodeRSAPublicKey(pubstr);
-        	pubstr = crypto.encodeRSAPublicKey(pubkey);
-        	int privbits = crypto.getKeyBits(privkey);
-        	int pubbits = crypto.getKeyBits(pubkey);
-        	//KeyPair genkey = crypto.RSAGenerateKey(4096);
-        	//genstr = crypto.encodeRSAPrivateKey(genkey, password);
-        	//this.genstr = genstr;
-        	String sha1 = crypto.sha1(privstr);
-        	String sha256 = crypto.sha256(privstr);
-        	String sig = crypto.sign("foo", privkey);
-        	boolean sigok = crypto.verify("foo", pubkey, sig);
-        	boolean sigbad = crypto.verify("foo", pubkey, "badsig");
-        	String cipherText = crypto.RSAPubkeyEncrypt("Hello", pubkey);
-        	String plainText = crypto.RSAPrivkeyDecrypt(cipherText, privkey);
-        	println("privstr: " + privstr);
-        	println("pubstr: " + pubstr);
-        	println("privbits: " + privbits);
-        	println("pubbits: " + pubbits);
-        	println("sha1: " + sha1);
-        	println("sha256: " + sha256);
-        	println("sig: " + sig);
-        	println("sigok: " + sigok);
-        	println("sigbad: " + sigbad);
-        	println("cipherText: " + cipherText);
-        	println("plainText: " + plainText);
-        	
-        } catch (IOException e) {}
-    }
+
+	/** Called when the activity is first created. */
+	@Override
+	public void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+		setContentView(R.layout.main);
+
+		Crypto crypto = new Crypto();
+		KeyPair privkey;
+		String privstr, pubstr;
+		//String genstr;
+		try {
+			privkey = crypto.decodeRSAPrivateKey(key, password);
+			privstr = crypto.encodeRSAPrivateKey(privkey, password);
+			pubstr = crypto.encodeRSAPublicKey(privkey);
+			PublicKey pubkey = crypto.decodeRSAPublicKey(pubstr);
+			pubstr = crypto.encodeRSAPublicKey(pubkey);
+			int privbits = crypto.getKeyBits(privkey);
+			int pubbits = crypto.getKeyBits(pubkey);
+			//KeyPair genkey = crypto.RSAGenerateKey(4096);
+			//genstr = crypto.encodeRSAPrivateKey(genkey, password);
+			//this.genstr = genstr;
+			String sha1 = crypto.sha1(privstr);
+			String sha256 = crypto.sha256(privstr);
+			String sig = crypto.sign("foo", privkey);
+			boolean sigok = crypto.verify("foo", pubkey, sig);
+			boolean sigbad = crypto.verify("foo", pubkey, "badsig");
+			String cipherText = crypto.RSAPubkeyEncrypt("Hello", pubkey);
+			String plainText = crypto.RSAPrivkeyDecrypt(cipherText, privkey);
+			println("privstr: " + privstr);
+			println("pubstr: " + pubstr);
+			println("privbits: " + privbits);
+			println("pubbits: " + pubbits);
+			println("sha1: " + sha1);
+			println("sha256: " + sha256);
+			println("sig: " + sig);
+			println("sigok: " + sigok);
+			println("sigbad: " + sigbad);
+			println("cipherText: " + cipherText);
+			println("plainText: " + plainText);
+
+		} catch (IOException e) {}
+	}
 }
