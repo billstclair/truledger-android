@@ -63,4 +63,12 @@ public class Utility {
   public static String base64Encode(byte buf[]) {
 	  return base64Encode(buf, 64);
   }
+
+  public static byte[] base64Decode(String string) {
+	  return Base64.decode(string);
+  }
+
+  public static byte[] base64Decode(byte buf[]) {
+	  return Base64.decode(buf);
+  }
 }

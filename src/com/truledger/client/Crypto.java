@@ -10,6 +10,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
@@ -132,16 +133,34 @@ public class Crypto {
 	}
 	
 	String sign(String data, KeyPair key) {
+		return this.sign(data, key.getPrivate());
+	}
+	
+	final private static String SIGNING_ALGORITHM = "SHA1withRSA";
+	
+	String sign(String data, PrivateKey key) {
 		try {
-			Signature sig = Signature.getInstance("SHA1withRSA");
-			sig.initSign(key.getPrivate());
-			sig.update(data.getBytes());
-			byte[] signature = sig.sign();
+			Signature signer = Signature.getInstance(SIGNING_ALGORITHM);
+			signer.initSign(key);
+			signer.update(data.getBytes());
+			byte[] signature = signer.sign();
 			String res = Utility.base64Encode(signature);
 			return res;
 		} catch (Exception e) {
 			System.out.println(e.toString());
 			return null;
+		}
+	}
+	
+	boolean verify(String data, PublicKey key, String signature) {
+		try {
+			Signature signer = Signature.getInstance(SIGNING_ALGORITHM);
+			signer.initVerify(key);
+			signer.update(data.getBytes());
+			byte[] sig = Utility.base64Decode(signature);
+			return signer.verify(sig);
+		} catch (Exception e) {
+			return false;
 		}
 	}
 

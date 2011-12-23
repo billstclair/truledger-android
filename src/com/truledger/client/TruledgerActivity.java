@@ -6,6 +6,7 @@ import java.security.PublicKey;
 
 import android.app.Activity;
 import android.os.Bundle;
+import android.util.Log;
 
 public class TruledgerActivity extends Activity {
 	String key = "-----BEGIN RSA PRIVATE KEY-----\n" +
@@ -52,6 +53,7 @@ public class TruledgerActivity extends Activity {
 			"-----END RSA PRIVATE KEY-----\n";
 	String password = "admin";
 	String privstr, pubstr, genstr, sha1, sha256, sig;
+    boolean sigok, sigbad;
 
 	public static void println(String str) {
 		System.out.println(str);
@@ -81,7 +83,11 @@ public class TruledgerActivity extends Activity {
         	String sha1 = crypto.sha1(privstr);
         	String sha256 = crypto.sha256(privstr);
         	String sig = crypto.sign("foo", privkey);
+        	boolean sigok = crypto.verify("foo", pubkey, sig);
+        	boolean sigbad = crypto.verify("foo", pubkey, "badsig");
         	this.sig = sig;
+        	this.sigok = sigok;
+        	this.sigbad = sigbad;
         	this.sha1 = sha1;
         	this.sha256 = sha256;
         	println("privstr: " + privstr);
@@ -89,6 +95,8 @@ public class TruledgerActivity extends Activity {
         	println("sha1: " + sha1);
         	println("sha256: " + sha256);
         	println("sig: " + sig);
+        	println("sigok: " + sigok);
+        	println("sigbad: " + sigbad);
         } catch (IOException e) {}
     }
 }
