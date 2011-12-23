@@ -15,6 +15,7 @@ import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.security.Security;
 import java.security.Signature;
+import java.security.interfaces.RSAKey;
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.RSAKeyGenParameterSpec;
 
@@ -168,7 +169,19 @@ public class Crypto {
 		}
 	}
 	
-	public static Cipher getRSACipher () throws NoSuchAlgorithmException, NoSuchPaddingException {
+	public int getKeyBits(KeyPair key) {
+		return this.getKeyBits(key.getPrivate());
+	}
+	
+	public int getKeyBits(PrivateKey key) {
+		return ((RSAKey)key).getModulus().bitLength();
+	}
+	
+	public int getKeyBits(PublicKey key) {
+		return ((RSAKey)key).getModulus().bitLength();
+	}
+	
+	private static Cipher getRSACipher () throws NoSuchAlgorithmException, NoSuchPaddingException {
 		return Cipher.getInstance("RSA/None/PKCS1Padding");
 	}
 	

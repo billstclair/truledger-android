@@ -52,8 +52,6 @@ public class TruledgerActivity extends Activity {
 			"Ap/YgwWkL1gs7DhtZjpKGH7Sji2WPKtuHzHFKKXWLmryoWII8CwAdlesg6Gj+fx0\n" +
 			"-----END RSA PRIVATE KEY-----\n";
 	String password = "admin";
-	String privstr, pubstr, genstr, sha1, sha256, sig, cipherText, plainText;
-    boolean sigok, sigbad;
 
 	public static void println(String str) {
 		System.out.println(str);
@@ -75,10 +73,10 @@ public class TruledgerActivity extends Activity {
         	pubstr = crypto.encodeRSAPublicKey(privkey);
         	PublicKey pubkey = crypto.decodeRSAPublicKey(pubstr);
         	pubstr = crypto.encodeRSAPublicKey(pubkey);
+        	int privbits = crypto.getKeyBits(privkey);
+        	int pubbits = crypto.getKeyBits(pubkey);
         	//KeyPair genkey = crypto.RSAGenerateKey(4096);
         	//genstr = crypto.encodeRSAPrivateKey(genkey, password);
-        	this.privstr = privstr;
-        	this.pubstr = pubstr;
         	//this.genstr = genstr;
         	String sha1 = crypto.sha1(privstr);
         	String sha256 = crypto.sha256(privstr);
@@ -87,15 +85,10 @@ public class TruledgerActivity extends Activity {
         	boolean sigbad = crypto.verify("foo", pubkey, "badsig");
         	String cipherText = crypto.RSAPubkeyEncrypt("Hello", pubkey);
         	String plainText = crypto.RSAPrivkeyDecrypt(cipherText, privkey);
-        	this.sig = sig;
-        	this.sigok = sigok;
-        	this.sigbad = sigbad;
-        	this.sha1 = sha1;
-        	this.sha256 = sha256;
-        	this.cipherText = cipherText;
-        	this.plainText = plainText;
         	println("privstr: " + privstr);
         	println("pubstr: " + pubstr);
+        	println("privbits: " + privbits);
+        	println("pubbits: " + pubbits);
         	println("sha1: " + sha1);
         	println("sha256: " + sha256);
         	println("sig: " + sig);
