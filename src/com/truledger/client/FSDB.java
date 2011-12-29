@@ -1,5 +1,8 @@
 package com.truledger.client;
 
+import java.util.Arrays;
+import java.util.Collections;
+
 import android.content.ContentValues;
 import android.content.Context;
 import android.database.Cursor;
@@ -46,7 +49,7 @@ public class FSDB {
 			"create table contents (_fileid integer primary key, contents text not null);";
 	
 	private static final int DATABASE_VERSION = 2;
-	private static final long EMPTY_DIR_INDEX = 0;
+	private static final long EMPTY_DIR_INDEX = 1;
 
 	private final Context mCtx;
 	private final String dbName;
@@ -94,8 +97,17 @@ public class FSDB {
 		mDb = mDbHelper.getWritableDatabase();
 	}
 
+	/**
+	 * Close the database
+	 */
 	public void close() {
 		mDbHelper.close();
+	}
+	
+	public void clearAll() {
+		mDb.delete(TOPLEVEL_TABLE_NAME, null, null);
+		mDb.delete(DIRECTORY_TABLE_NAME, null, null);
+		mDb.delete(VALUE_TABLE_NAME, null, null);
 	}
 	
 	/**
@@ -228,6 +240,7 @@ public class FSDB {
 			res[i] = cursor.getString(2);
 			cursor.moveToNext();
 		}
+		Arrays.sort(res);
 		return res;
 	}
 

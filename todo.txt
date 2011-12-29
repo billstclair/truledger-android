@@ -1,4 +1,7 @@
 FSDB -> SQLite
+  Record each element of the directory path in the dir table,
+    so we can return those with contents()
+
 Message parser
 Client API
 User interface
