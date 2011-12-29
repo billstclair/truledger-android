@@ -1,0 +1,45 @@
+FSDB -> SQLite
+Message parser
+Client API
+User interface
+
+FSDB
+
+Three tables per database
+
+dirindex
+  Toplevel Index
+  Map directory path to primary index directory number
+  0 is always top-level directory: ""
+  Columns: _dirid (unique integer), dirpath (text)
+  index: unique dirpath
+
+dirfiles
+  Directory Index
+  Map directory number to file/directory names.
+  Multiple rows per directory.
+  primary index is also primary index in value table
+  Columns: _fileid (unique integer), dirid (integer), filename (text)
+  index: dirid
+  index: unique dirid filename
+
+contents
+  File Values
+  Map dirfiles primary index to contents of FSDB file.
+  Columns: _fileid (unique integer), contents (text)
+
+One database for each top-level directory in http://truledger.com/doc/client.txt
+
+privkey
+  <hash> = <privkey>
+pubkey
+  <id> = <pubkey>
+serverid
+  sha1(<url>) = <serverid>
+server
+  <serverid>/ -> url, name, tokenid, regfee, tranfee, features
+  fee/, asset/, permission/
+session
+  <sessionhash> = <encrypted-passphrase>
+account
+  <id>/ -> session, preference, contact/, server/

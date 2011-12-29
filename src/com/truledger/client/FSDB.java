@@ -6,7 +6,6 @@ import android.database.Cursor;
 import android.database.SQLException;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
-import android.util.Log;
 
 public class FSDB {
 
@@ -23,7 +22,6 @@ public class FSDB {
 	private static final String KEY_VALUE_ROWID = "_fileid";
 	private static final String KEY_VALUE_CONTENTS = "contents";
 	
-	private static final String TAG = "FSDB";
 	private DatabaseHelper mDbHelper;
 	private SQLiteDatabase mDb;
 
@@ -87,29 +85,42 @@ public class FSDB {
 	 * 
 	 * @param ctx the Context within which to work
 	 * @param dbName The name of the database
+	 * @throws SQLException If the database could not be opened or created
 	 */
-	public FSDB(Context ctx, String dbName) {
+	public FSDB(Context ctx, String dbName) throws SQLException {
 		this.mCtx = ctx;
 		this.dbName = dbName;
-	}
-
-	/**
-	 * Open an FSDB database. If it cannot be opened, try to create a new
-	 * instance of the database. If it cannot be created, throw an exception to
-	 * signal the failure
-	 * 
-	 * @return this (self reference, allowing this to be chained in an
-	 *         initialization call)
-	 * @throws SQLException if the database could be neither opened or created
-	 */
-	public FSDB open() throws SQLException {
 		mDbHelper = new DatabaseHelper(mCtx, dbName);
 		mDb = mDbHelper.getWritableDatabase();
-		return this;
 	}
 
 	public void close() {
 		mDbHelper.close();
+	}
+	
+	/**
+	 * Find the rowid for the toplevel directory entry for dirpath
+	 * @param dirpath The path to the directory
+	 * @param createIfNot True to create the directory entry if it does not exist
+	 * @return The rowid, -1 if there is no row, -rowid - 1 if the row was created.
+	 * @throws SQLException if there was an error inserting a new row
+	 */
+	private long getDirID(String dirpath, boolean createIfNot) throws SQLException {
+		if (Utility.isNull(dirpath)) return EMPTY_DIR_INDEX;
+		Cursor cursor = mDb.query(TOPLEVEL_TABLE_NAME, new String[] {KEY_TOPLEVEL_ROWID},
+				KEY_TOPLEVEL_DIRPATH + "=?", new String[] {dirpath}, null, null, null);
+		if (cursor != null && cursor.getCount() == 1) {
+			cursor.moveToFirst();
+			return cursor.getLong(0);
+		} else if (createIfNot) {
+			ContentValues iv = new ContentValues();
+			iv.put(KEY_TOPLEVEL_DIRPATH, dirpath);
+			long dirid = mDb.insert(TOPLEVEL_TABLE_NAME, null, iv);
+			if (dirid == -1) throw new SQLException("Failed to create toplevel entry for dirpath: " + dirpath);
+			return -dirid - 1;
+		} else {
+			return -1;
+		}
 	}
 
 	/**
@@ -121,26 +132,14 @@ public class FSDB {
 	 * @throws SQLException if there was an error creating the new dirpath/filename pair
 	 */
 	private long getFileID(String dirpath, String filename, boolean createIfNot) throws SQLException {
-		long dirid = EMPTY_DIR_INDEX;
+		long dirid = this.getDirID(dirpath, createIfNot);
+		if (dirid == -1) return -1;
 		boolean isNewDirid = false;
-		long fileid;
-		Cursor cursor;
-		ContentValues iv = null;
-		if (!Utility.isNull(dirpath)) {
-			cursor = mDb.query(TOPLEVEL_TABLE_NAME, new String[] {KEY_TOPLEVEL_ROWID},
-					KEY_TOPLEVEL_DIRPATH + " = ?", new String[] {dirpath}, null, null, null);
-			if (cursor != null && cursor.getCount() == 1) {
-				cursor.moveToFirst();
-				dirid = cursor.getLong(0);
-			} else if (createIfNot) {
-				iv = new ContentValues();
-				iv.put(KEY_TOPLEVEL_DIRPATH, dirpath);
-				dirid = mDb.insert(TOPLEVEL_TABLE_NAME, null, iv);
-				isNewDirid = true;
-			} else {
-				return -1;
-			}
+		if (dirid < 0) {
+			dirid = -(dirid+1);
+			isNewDirid = true;
 		}
+		Cursor cursor;
 		if (isNewDirid) {
 			cursor = null;
 		} else {
@@ -152,10 +151,10 @@ public class FSDB {
 			cursor.moveToFirst();
 			return cursor.getLong(0);
 		} else if (createIfNot) {
-			iv = new ContentValues();
+			ContentValues iv = new ContentValues();
 			iv.put(KEY_DIRECTORY_DIRID, dirid);
 			iv.put(KEY_DIRECTORY_FILENAME, filename);
-			fileid = mDb.insert(DIRECTORY_TABLE_NAME, null, iv);
+			long fileid = mDb.insert(DIRECTORY_TABLE_NAME, null, iv);
 			if (fileid < 0) throw new SQLException("Error inserting into directory table");
 			return fileid;			
 		} else {
@@ -163,17 +162,6 @@ public class FSDB {
 		}
 	}
 	
-	/**
-	 * Find the rowid for inserting a value in the VALUE_TABLE_NAME, creating it if isn't not already there.
-	 * @param dirpath the directory path
-	 * @param filename the file name
-	 * @returns the rowid for insertion, or -1 if there was no such dirpath/filename pair
-	 * @throws SQLException if there was an error creating the new dirpath/filename pair
-	 */
-	private long getFileID(String dirpath, String filename) throws SQLException {
-		return getFileID(dirpath, filename, true);
-	}
-
 	/**
 	 * Write a value into the database
 	 * 
@@ -227,7 +215,24 @@ public class FSDB {
 	 * @return an array of filename strings, or NULL if dirpath is empty
 	 */
 	public String[] contents(String dirpath) {
-		
+		long dirid = this.getDirID(dirpath, false);
+		if (dirid == -1) return null;
+		Cursor cursor =  mDb.query(DIRECTORY_TABLE_NAME,  new String[] {KEY_DIRECTORY_FILENAME},
+				KEY_DIRECTORY_DIRID + "=" + dirid, null, null, null, null);
+		if (cursor == null) return null;
+		int count = cursor.getCount();
+		if (count == 0) return null;
+		String[] res = new String[count];
+		cursor.moveToFirst();
+		for (int i=0; i<count; i++) {
+			res[i] = cursor.getString(2);
+			cursor.moveToNext();
+		}
+		return res;
+	}
+
+	public String getDbName() {
+		return dbName;
 	}
 }
 
@@ -235,7 +240,7 @@ public class FSDB {
 ///
 /// Copyright 2011 Bill St. Clair
 ///
-/// Licensed under the Apache License, Version 2.0 (the "License")/
+/// Licensed under the Apache License, Version 2.0 (the "License")
 /// you may not use this file except in compliance with the License.
 /// You may obtain a copy of the License at
 ///
