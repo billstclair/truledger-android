@@ -135,14 +135,85 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     	}
     }
     
-    private static final String[] dirs0 = {"one", "two", "three"};
-    private static final String[] dirs1 = {"eine", "zwei"};
-    private static final String[] dirs2 = {"un", "deux"};
+    private static void writeFiles(FSDB db, String dirpath, int cnt) {
+    	for (int i=0; i<cnt; i++) {
+    		db.put(dirpath, ""+i, dirpath+"/"+i);
+    	}
+    }
     
+    private static void readFiles(FSDB db, String dirpath, int cnt) {
+    	String files[] = db.contents(dirpath);
+    	int len = files.length;
+    	assertTrue("" + cnt + "==" + len, cnt == len);
+    	for (int i=0; i<cnt; i++) {
+    		String file = ""+i;
+    		assertEquals(db.get(dirpath, file), dirpath+"/"+i);
+    		if (i < len) assertEquals(file, files[i]);
+    	}
+    }
+    
+    private static void readOrWriteFiles(FSDB db, String dirpath, int cnt, boolean write) {
+    	if (write) writeFiles(db, dirpath, cnt);
+    	else readFiles(db, dirpath, cnt);
+    }
     
     public void testFSDB() {
-    	mCtx.deleteDatabase("test");
-    	FSDB db = new FSDB(mCtx, "test");
-    	
+    	String dbname = "test";
+    	mCtx.deleteDatabase(dbname);
+    	FSDB db = new FSDB(mCtx, dbname);
+    	try {
+    		testFSDBInternal(db);
+    	} finally {
+    		db.close();
+    		mCtx.deleteDatabase(dbname);
+    	}
+    }
+    
+    private static void testFSDBInternal(FSDB db) {
+        final String dirs0[] = {"one", "two", "three"};
+        final String dirs1[] = {"eine", "zwei"};
+        final String dirs2[] = {"un", "deux"};
+            
+		int cnt0 = 0;
+		int cnt1 = 0;
+		int cnt2 = 0;
+		int cnt;
+		int totalcnt = 0;
+		String dirpath;
+		for (int pass=0; pass<=1; pass++) {
+			boolean write = (pass == 0);
+			cnt = 2;
+			totalcnt += cnt;
+			readOrWriteFiles(db, "", cnt, write);
+	    	for (int i=0; i<(dirs0.length); i++) {
+				cnt0 = i+1;
+				String dirpath0 = dirs0[i];
+				dirpath = dirpath0;
+				if (i > 0) {
+					for (int j=0; j<(dirs1.length); j++) {
+						cnt1 = j+1;
+						String dirpath1 = dirs1[j];
+						dirpath = dirpath0 + "/" + dirpath1;
+						if (j > 0) {
+							for (int k=0; k<(dirs2.length); k++) {
+								cnt2 = k+1;
+								dirpath += "/" + dirs2[k];
+								cnt = cnt0+cnt1+cnt2;
+								totalcnt += cnt;
+								readOrWriteFiles(db, dirpath, cnt, write);
+							}
+						} else {
+							cnt = cnt0+cnt1;
+							totalcnt += cnt;
+							readOrWriteFiles(db, dirpath, cnt, write);
+						}
+					}
+				} else {
+					totalcnt += cnt0;
+					readOrWriteFiles(db, dirpath, cnt0, write);
+				}
+			}
+		}
+		println("Total reads + writes: " + totalcnt);
     }
 }

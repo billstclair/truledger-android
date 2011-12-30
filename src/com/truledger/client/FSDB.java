@@ -121,10 +121,16 @@ public class FSDB {
 		if (Utility.isNull(dirpath)) return EMPTY_DIR_INDEX;
 		Cursor cursor = mDb.query(TOPLEVEL_TABLE_NAME, new String[] {KEY_TOPLEVEL_ROWID},
 				KEY_TOPLEVEL_DIRPATH + "=?", new String[] {dirpath}, null, null, null);
-		if (cursor != null && cursor.getCount() == 1) {
-			cursor.moveToFirst();
-			return cursor.getLong(0);
-		} else if (createIfNot) {
+		try {
+			if (cursor != null && cursor.getCount() == 1) {
+				cursor.moveToFirst();
+				long res = cursor.getLong(0);
+				return res;
+			} 
+		} finally {
+			if (cursor != null) cursor.close();
+		}
+		if (createIfNot) {
 			ContentValues iv = new ContentValues();
 			iv.put(KEY_TOPLEVEL_DIRPATH, dirpath);
 			long dirid = mDb.insert(TOPLEVEL_TABLE_NAME, null, iv);
@@ -151,18 +157,22 @@ public class FSDB {
 			dirid = -(dirid+1);
 			isNewDirid = true;
 		}
-		Cursor cursor;
-		if (isNewDirid) {
-			cursor = null;
-		} else {
+		Cursor cursor = null;
+		if (!isNewDirid) {
 			cursor = mDb.query(DIRECTORY_TABLE_NAME,  new String[] {KEY_DIRECTORY_ROWID},
 					KEY_DIRECTORY_DIRID + "=" + dirid + " AND " + KEY_DIRECTORY_FILENAME + "=?",
 					new String[] {filename}, null, null, null);
 		}
-		if (cursor != null && cursor.getCount() == 1) {
-			cursor.moveToFirst();
-			return cursor.getLong(0);
-		} else if (createIfNot) {
+		try {
+			if (cursor != null && cursor.getCount() == 1) {
+				cursor.moveToFirst();
+				long res = cursor.getLong(0);
+				return res;
+			}
+		} finally {
+			if (cursor != null) cursor.close();
+		}
+		if (createIfNot) {
 			ContentValues iv = new ContentValues();
 			iv.put(KEY_DIRECTORY_DIRID, dirid);
 			iv.put(KEY_DIRECTORY_FILENAME, filename);
@@ -216,9 +226,14 @@ public class FSDB {
 		if (fileid < 0) return null;
 		Cursor cursor = mDb.query(VALUE_TABLE_NAME, new String[] {KEY_VALUE_CONTENTS},
 				KEY_VALUE_ROWID + "=" + fileid, null, null, null, null);
-		if (cursor == null || cursor.getCount() != 1) return null;
-		cursor.moveToFirst();
-		return cursor.getString(1);
+		if (cursor == null) return null;
+		try {
+			if (cursor.getCount() != 1) return null;
+			cursor.moveToFirst();
+			return cursor.getString(0);
+		} finally {
+			cursor.close();
+		}
 	}
 	
 	/**
@@ -229,19 +244,22 @@ public class FSDB {
 	public String[] contents(String dirpath) {
 		long dirid = this.getDirID(dirpath, false);
 		if (dirid == -1) return null;
-		Cursor cursor =  mDb.query(DIRECTORY_TABLE_NAME,  new String[] {KEY_DIRECTORY_FILENAME},
+		Cursor cursor = mDb.query(DIRECTORY_TABLE_NAME,  new String[] {KEY_DIRECTORY_FILENAME},
 				KEY_DIRECTORY_DIRID + "=" + dirid, null, null, null, null);
 		if (cursor == null) return null;
-		int count = cursor.getCount();
-		if (count == 0) return null;
-		String[] res = new String[count];
-		cursor.moveToFirst();
-		for (int i=0; i<count; i++) {
-			res[i] = cursor.getString(2);
-			cursor.moveToNext();
+		try {
+			int count = cursor.getCount();
+			if (count == 0) return null;
+			String[] res = new String[count];
+			for (int i=0; i<count; i++) {
+				cursor.moveToNext();
+				res[i] = cursor.getString(0);
+			}
+			Arrays.sort(res);
+			return res;
+		} finally {
+			cursor.close();
 		}
-		Arrays.sort(res);
-		return res;
 	}
 
 	public String getDbName() {
