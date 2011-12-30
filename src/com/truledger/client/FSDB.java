@@ -110,6 +110,68 @@ public class FSDB {
 		mDb.delete(VALUE_TABLE_NAME, null, null);
 	}
 	
+	private static final char SLASH = '/';
+	
+	/**
+	 * Remove leading and trailing slash from a string
+	 * @param dirpath the string
+	 * @return dirpath with leading and trailing slash removed
+	 */
+	public static String normalizeDirpath(String dirpath) {
+		if (dirpath == null) return null;
+		int len = dirpath.length();
+		boolean isStartDelim = dirpath.charAt(0) == SLASH;
+		boolean isEndDelim = dirpath.charAt(len-1) == SLASH;
+		if (isStartDelim || isEndDelim) {
+			dirpath = dirpath.substring(isStartDelim ? 1 : 0, isEndDelim ? len-1 : len);
+		}
+		return dirpath;
+	}
+	
+	/**
+	 * Create directory entries for intermediate directories in dirpath
+	 * @param dirpath the path to process for intermediate directories
+	 * @throws SQLException if there is an error adding a directory table row
+	 */
+	private void addIntermediatePaths(String dirpath) throws SQLException {
+		String prefix = "";
+		long dirid = EMPTY_DIR_INDEX;
+		int start = 0;
+		int len = dirpath.length();
+		while (start < len) {
+			for (int i=start; i<=len; i++) {
+				if (i==len || dirpath.charAt(i) == SLASH) {
+					String filename = dirpath.substring(start, i);
+					Cursor cursor = mDb.query(DIRECTORY_TABLE_NAME,  
+							new String[] {KEY_DIRECTORY_ROWID}, 
+							KEY_DIRECTORY_DIRID + "=" + dirid + " and " +
+							KEY_DIRECTORY_FILENAME + "=?", 
+							new String[] {filename}, null, null, null);
+					try {
+						if (cursor == null || cursor.getCount() != 1) {
+							ContentValues iv = new ContentValues();
+							iv.put(KEY_DIRECTORY_DIRID, dirid);
+							iv.put(KEY_DIRECTORY_FILENAME, filename);
+							if (mDb.insert(DIRECTORY_TABLE_NAME, null, iv) == -1) {
+								throw new SQLException("Error inserting into directory table");
+							}
+						}
+					} finally {
+						if (cursor != null) cursor.close();
+					}
+					if (i < len) {
+						if (prefix.equals("")) prefix = filename;
+						else prefix += "/" + filename;
+						dirid = this.getDirID(prefix, true, false);
+						if (dirid < 0) dirid = -(dirid+1);
+					}
+					start = i+1;
+					break;
+				}
+			}
+		}
+	}
+	
 	/**
 	 * Find the rowid for the toplevel directory entry for dirpath
 	 * @param dirpath The path to the directory
@@ -118,7 +180,20 @@ public class FSDB {
 	 * @throws SQLException if there was an error inserting a new row
 	 */
 	private long getDirID(String dirpath, boolean createIfNot) throws SQLException {
+		return getDirID(dirpath, createIfNot, true);
+	}
+	
+	/**
+	 * Find the rowid for the toplevel directory entry for dirpath
+	 * @param dirpath The path to the directory
+	 * @param createIfNot True to create the directory entry if it does not exist
+	 * @param createIntermediates True to create intermediate directory entries
+	 * @return The rowid, -1 if there is no row, -rowid - 1 if the row was created.
+	 * @throws SQLException if there was an error inserting a new row
+	 */
+	private long getDirID(String dirpath, boolean createIfNot, boolean createIntermediates) {
 		if (Utility.isNull(dirpath)) return EMPTY_DIR_INDEX;
+		dirpath = normalizeDirpath(dirpath);
 		Cursor cursor = mDb.query(TOPLEVEL_TABLE_NAME, new String[] {KEY_TOPLEVEL_ROWID},
 				KEY_TOPLEVEL_DIRPATH + "=?", new String[] {dirpath}, null, null, null);
 		try {
@@ -135,6 +210,7 @@ public class FSDB {
 			iv.put(KEY_TOPLEVEL_DIRPATH, dirpath);
 			long dirid = mDb.insert(TOPLEVEL_TABLE_NAME, null, iv);
 			if (dirid == -1) throw new SQLException("Failed to create toplevel entry for dirpath: " + dirpath);
+			if (createIntermediates) this.addIntermediatePaths(dirpath);
 			return -dirid - 1;
 		} else {
 			return -1;

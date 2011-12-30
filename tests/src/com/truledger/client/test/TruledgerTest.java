@@ -3,6 +3,7 @@ package com.truledger.client.test;
 import java.io.IOException;
 import java.security.KeyPair;
 import java.security.PublicKey;
+import java.util.Arrays;
 
 import android.test.ActivityInstrumentationTestCase2;
 
@@ -141,20 +142,27 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     	}
     }
     
-    private static void readFiles(FSDB db, String dirpath, int cnt) {
+    private static void readFiles(FSDB db, String dirpath, int cnt, String[] subdirs) {
     	String files[] = db.contents(dirpath);
-    	int len = files.length;
-    	assertTrue("" + cnt + "==" + len, cnt == len);
+    	int len = (files == null) ? 0 : files.length;
+    	int subdirslen = (subdirs == null) ? 0 : subdirs.length;
+    	int count = cnt + subdirslen;
+    	assertTrue(dirpath + ": " + count + "==" + len, count == len);
     	for (int i=0; i<cnt; i++) {
     		String file = ""+i;
     		assertEquals(db.get(dirpath, file), dirpath+"/"+i);
-    		if (i < len) assertEquals(file, files[i]);
+    		assertTrue("Find " + file, Arrays.binarySearch(files, file) >= 0);
+    	}
+    	for (int i=0; i<subdirslen; i++) {
+    		String file = subdirs[i];
+    		assertTrue("Find " + file, Arrays.binarySearch(files, file) >= 0);
     	}
     }
     
-    private static void readOrWriteFiles(FSDB db, String dirpath, int cnt, boolean write) {
+    private static void readOrWriteFiles(FSDB db, String dirpath, int cnt, boolean write, 
+    		String[] subdirs) {
     	if (write) writeFiles(db, dirpath, cnt);
-    	else readFiles(db, dirpath, cnt);
+    	else readFiles(db, dirpath, cnt, subdirs);
     }
     
     public void testFSDB() {
@@ -184,7 +192,7 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
 			boolean write = (pass == 0);
 			cnt = 2;
 			totalcnt += cnt;
-			readOrWriteFiles(db, "", cnt, write);
+			readOrWriteFiles(db, "", cnt, write, dirs0);
 	    	for (int i=0; i<(dirs0.length); i++) {
 				cnt0 = i+1;
 				String dirpath0 = dirs0[i];
@@ -193,27 +201,33 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
 					for (int j=0; j<(dirs1.length); j++) {
 						cnt1 = j+1;
 						String dirpath1 = dirs1[j];
-						dirpath = dirpath0 + "/" + dirpath1;
+						String dirpath01 = dirpath0 + "/" + dirpath1;
+						dirpath = dirpath01;
 						if (j > 0) {
 							for (int k=0; k<(dirs2.length); k++) {
 								cnt2 = k+1;
-								dirpath += "/" + dirs2[k];
+								dirpath = dirpath01 + "/" + dirs2[k];
 								cnt = cnt0+cnt1+cnt2;
 								totalcnt += cnt;
-								readOrWriteFiles(db, dirpath, cnt, write);
+								readOrWriteFiles(db, dirpath, cnt, write, null);
 							}
 						} else {
 							cnt = cnt0+cnt1;
 							totalcnt += cnt;
-							readOrWriteFiles(db, dirpath, cnt, write);
+							readOrWriteFiles(db, dirpath, cnt, write, null);
 						}
 					}
 				} else {
 					totalcnt += cnt0;
-					readOrWriteFiles(db, dirpath, cnt0, write);
+					readOrWriteFiles(db, dirpath, cnt0, write, null);
 				}
 			}
 		}
+		// Verify intermediate directories
+		readFiles(db, "two", 0, dirs1);
+		readFiles(db, "three", 0, dirs1);
+		readFiles(db, "two/zwei", 0, dirs2);
+		readFiles(db, "three/zwei", 0, dirs2);
 		println("Total reads + writes: " + totalcnt);
     }
 }
