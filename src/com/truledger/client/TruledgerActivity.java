@@ -1,12 +1,7 @@
 package com.truledger.client;
 
-import java.io.IOException;
-import java.security.KeyPair;
-import java.security.PublicKey;
-
 import android.app.Activity;
 import android.os.Bundle;
-import android.util.Log;
 
 public class TruledgerActivity extends Activity {
 

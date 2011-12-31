@@ -1,7 +1,6 @@
 package com.truledger.client;
 
 import java.util.Arrays;
-import java.util.Collections;
 
 import android.content.ContentValues;
 import android.content.Context;
