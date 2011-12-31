@@ -106,23 +106,23 @@ public class Crypto {
 		return encodeRSAPublicKey(key.getPublic());
 	}
 
-	public String sha1(byte[] buf) {
-		return this.digest(buf, "SHA1");
+	public static String sha1(byte[] buf) {
+		return digest(buf, "SHA1");
 	}
 
-	public String sha1(String str) {
-		return this.digest(str, "SHA1");
+	public static String sha1(String str) {
+		return digest(str, "SHA1");
 	}
 
-	public String sha256(byte[] buf) {
-		return this.digest(buf, "SHA256");
+	public static String sha256(byte[] buf) {
+		return digest(buf, "SHA256");
 	}
 
-	public String sha256(String str) {
-		return this.digest(str, "SHA256");
+	public static String sha256(String str) {
+		return digest(str, "SHA256");
 	}
 
-	public String digest(byte[] buf, String algorithm) {
+	public static String digest(byte[] buf, String algorithm) {
 		MessageDigest dig;
 		try {
 			dig = MessageDigest.getInstance(algorithm);
@@ -133,8 +133,8 @@ public class Crypto {
 		return Utility.bin2hex(dig.digest());
 	}
 
-	public String digest(String str, String algorithm) {
-		return this.digest(str.getBytes(), algorithm);
+	public static String digest(String str, String algorithm) {
+		return digest(str.getBytes(), algorithm);
 	}
 
 	public String sign(String data, KeyPair key) {

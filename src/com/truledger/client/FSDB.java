@@ -275,6 +275,10 @@ public class FSDB {
 		if (!notnull) {
 			if (fileid >= 0) {
 				mDb.delete(VALUE_TABLE_NAME, where, null);
+				long dirid = this.getDirID(dirpath, false);
+				mDb.delete(DIRECTORY_TABLE_NAME,
+						KEY_DIRECTORY_DIRID + "=" + dirid + " AND " + KEY_DIRECTORY_FILENAME + "=?",
+						new String[] {filename});
 			}
 			return contents;
 		}
