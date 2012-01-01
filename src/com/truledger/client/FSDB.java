@@ -293,6 +293,17 @@ public class FSDB {
 		}
 		return contents;
 	}
+	
+	/**
+	 * Shortcut for put(null, filename, contents)
+	 * @param filename
+	 * @param contents
+	 * @return put(null, filename, contents)
+	 * @throws SQLException
+	 */
+	public String put(String filename, String contents) throws SQLException {
+		return this.put(null, filename, contents);
+	}
 
 	/**
 	 * Fetch a database value from dirpath/filename
@@ -300,7 +311,7 @@ public class FSDB {
 	 * @param filename the filename
 	 * @return the contents of dirpath/filename, or NULL if there is none.
 	 */
-	public String get(String dirpath, String filename) {
+	public String get(String dirpath, String filename) throws SQLException {
 		long fileid = this.getFileID(dirpath, filename, false);
 		if (fileid < 0) return null;
 		Cursor cursor = mDb.query(VALUE_TABLE_NAME, new String[] {KEY_VALUE_CONTENTS},
@@ -316,11 +327,20 @@ public class FSDB {
 	}
 	
 	/**
+	 * Shortcut for get(null, filename)
+	 * @param filename
+	 * @return get(null, filename)
+	 */
+	public String get(String filename) throws SQLException {
+		return this.get(null, filename);
+	}
+	
+	/**
 	 * Return all the filenames in a directory
 	 * @param dirpath the path of the directory
 	 * @return an array of filename strings, or NULL if dirpath is empty
 	 */
-	public String[] contents(String dirpath) {
+	public String[] contents(String dirpath) throws SQLException {
 		long dirid = this.getDirID(dirpath, false);
 		if (dirid == -1) return null;
 		Cursor cursor = mDb.query(DIRECTORY_TABLE_NAME,  new String[] {KEY_DIRECTORY_FILENAME},
@@ -339,6 +359,15 @@ public class FSDB {
 		} finally {
 			cursor.close();
 		}
+	}
+	
+	/**
+	 * Shortcut for contents(null);
+	 * @return contents(null)
+	 * @throws SQLException
+	 */
+	public String[] contents() throws SQLException {
+		return this.contents(null);
 	}
 
 	public String getDbName() {

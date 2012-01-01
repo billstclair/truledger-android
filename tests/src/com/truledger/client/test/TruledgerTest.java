@@ -7,13 +7,16 @@ import java.util.Arrays;
 
 import android.test.ActivityInstrumentationTestCase2;
 
+import com.truledger.client.ClientDB;
 import com.truledger.client.Crypto;
 import com.truledger.client.FSDB;
+import com.truledger.client.Parser;
 import com.truledger.client.TruledgerActivity;
 
 public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerActivity> {
 	
-	private static final boolean runPubkeyGen = false;
+	private static boolean runPubkeyGen = false;
+	private static boolean runFSDBTest = false;
 
 	private static final String key = "-----BEGIN RSA PRIVATE KEY-----\n" +
 			"Proc-Type: 4,ENCRYPTED\n" +
@@ -76,33 +79,32 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
 	}
     
     public void testCrypto() {
-		Crypto crypto = new Crypto();
 		KeyPair privkey;
 		String privstr, pubstr;
 		//String genstr;
 		try {
-			privkey = crypto.decodeRSAPrivateKey(key, password);
-			privstr = crypto.encodeRSAPrivateKey(privkey, password);
-			pubstr = crypto.encodeRSAPublicKey(privkey);
-			PublicKey pubkey = crypto.decodeRSAPublicKey(pubstr);
-			pubstr = crypto.encodeRSAPublicKey(pubkey);
-			int privbits = crypto.getKeyBits(privkey);
-			int pubbits = crypto.getKeyBits(pubkey);
+			privkey = Crypto.decodeRSAPrivateKey(key, password);
+			privstr = Crypto.encodeRSAPrivateKey(privkey, password);
+			pubstr = Crypto.encodeRSAPublicKey(privkey);
+			PublicKey pubkey = Crypto.decodeRSAPublicKey(pubstr);
+			pubstr = Crypto.encodeRSAPublicKey(pubkey);
+			int privbits = Crypto.getKeyBits(privkey);
+			int pubbits = Crypto.getKeyBits(pubkey);
 			assertEquals(new Integer(privbits), new Integer(pubbits));
 			assertTrue(privbits == 3072);
 			
-			String sha1 = crypto.sha1(privstr);
-			String sha256 = crypto.sha256(privstr);
+			String sha1 = Crypto.sha1(privstr);
+			String sha256 = Crypto.sha256(privstr);
 			
-			String sig = crypto.sign("foo", privkey);
-			boolean sigok = crypto.verify("foo", pubkey, sig);
+			String sig = Crypto.sign("foo", privkey);
+			boolean sigok = Crypto.verify("foo", pubkey, sig);
 			assertTrue(sigok);
-			boolean sigbad = crypto.verify("foo", pubkey, "badsig");
+			boolean sigbad = Crypto.verify("foo", pubkey, "badsig");
 			assertFalse(sigbad);
 			
 			String text = "Hello";
-			String cipherText = crypto.RSAPubkeyEncrypt(text, pubkey);
-			String plainText = crypto.RSAPrivkeyDecrypt(cipherText, privkey);
+			String cipherText = Crypto.RSAPubkeyEncrypt(text, pubkey);
+			String plainText = Crypto.RSAPrivkeyDecrypt(cipherText, privkey);
 			assertEquals(plainText, text);
 			
 			println("privstr: " + privstr);
@@ -125,9 +127,8 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     public void testPubkeyGen() {
     	if (runPubkeyGen) {
     		try {
-    			Crypto crypto = new Crypto();
-    			KeyPair genkey = crypto.RSAGenerateKey(4096);
-    			String genstr = crypto.encodeRSAPrivateKey(genkey, password);
+    			KeyPair genkey = Crypto.RSAGenerateKey(4096);
+    			String genstr = Crypto.encodeRSAPrivateKey(genkey, password);
     			println("genstr: " + genstr);
     		} catch (IOException e) {
     			println("IOException: " + e);  
@@ -166,6 +167,7 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     }
     
     public void testFSDB() {
+    	if (!runFSDBTest) return;
     	String dbname = "test";
     	mCtx.deleteDatabase(dbname);
     	FSDB db = new FSDB(mCtx, dbname);
@@ -229,5 +231,42 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
 		readFiles(db, "two/zwei", 0, dirs2);
 		readFiles(db, "three/zwei", 0, dirs2);
 		println("Total reads + writes: " + totalcnt);
+    }
+    
+    public static Parser.DictList parse(Parser parser, String rawmsg, String msg) {
+    	try {
+    		return parser.parse(msg);
+    	} catch (Parser.ParseException e) {
+    		println("Parse exception on " + rawmsg + " - " + e);
+    		assertTrue(e.getMessage(), false);
+    		return null;
+    	}
+    }
+    
+    public void testParser() {
+    	try {
+    		ClientDB db = new ClientDB(mCtx);
+    		ClientDB.PubkeyDB pubkeyDB = db.getPubkeyDB();
+    		KeyPair privkey = Crypto.decodeRSAPrivateKey(key, password);
+    		String pubstr = Crypto.encodeRSAPublicKey(privkey);
+    		String id = Crypto.getKeyID(pubstr);
+    		pubkeyDB.put(id, pubstr);
+    		String bankid = "940fcf32f4f7753529080da0ca026d5c2cc7abe1";
+    		String rawmsg = "(" + id + ",getinbox," + bankid + ",2182)";
+    		String sig = Crypto.sign(rawmsg, privkey);
+    		String msg = rawmsg + ":" + sig;
+    		Parser parser = new Parser(pubkeyDB);
+    		Parser.DictList parselist = parse(parser, rawmsg, msg);
+    		assertTrue("One element in parse list", parselist.size() == 1);
+    		Parser.Dict parse = parselist.elementAt(0);
+    		assertTrue("parse[0]==<id>", parse.get(0).equals(id));
+    		assertTrue("parse[1]==getinbox", parse.get(1).equals("getinbox"));
+    		assertTrue("parse[2]==<bankid>", parse.get(2).equals(bankid));
+    		assertTrue("parse[3]==2182", parse.get(3).equals("2182"));
+    		assertTrue("parsemsg==rawmsg", Parser.getParseMsg(parse).equals(msg));
+    	} catch (IOException e) {
+			println("IOException: " + e);
+			assertTrue(false);
+    	}
     }
 }

@@ -38,7 +38,7 @@ public class Crypto {
 			Security.addProvider(new BouncyCastleProvider());
 			random = new SecureRandom();
 			double ver = Security.getProvider("SC").getVersion();
-			setVer(ver);
+			Crypto.ver = ver;
 			isProviderInitialized = true;
 		}
 	}
@@ -53,6 +53,7 @@ public class Crypto {
 	}
 	
 	public static KeyPair RSAGenerateKey(int keysize, BigInteger exponent) {
+		initialize();
 		KeyPairGenerator kpg;
 		try {
 			kpg = KeyPairGenerator.getInstance("RSA");
@@ -75,6 +76,7 @@ public class Crypto {
 	}
 
 	public static KeyPair decodeRSAPrivateKey(String key, final String password) throws IOException {
+		initialize();
 		Reader keyReader = new StringReader(key);
 		PasswordFinder pwd = new PasswordFinder() {
 			public char[] getPassword() {
@@ -86,6 +88,7 @@ public class Crypto {
 	}
 
 	public static String encodeRSAPrivateKey(KeyPair key, final String password) throws IOException {
+		initialize();
 		StringWriter keyWriter = new StringWriter();
 		PEMWriter writer = new PEMWriter(keyWriter);
 		writer.writeObject(key, "AES-256-CBC", password.toCharArray(), getRandom());
@@ -94,6 +97,7 @@ public class Crypto {
 	}
 
 	public static PublicKey decodeRSAPublicKey(String key) throws IOException {
+		initialize();
 		Reader keyReader = new StringReader(key);
 		PEMReader reader = new PEMReader(keyReader);
 		return (PublicKey)reader.readObject();
@@ -104,6 +108,7 @@ public class Crypto {
 	}
 
 	public static String encodeRSAPublicKey(PublicKey key) throws IOException {
+		initialize();
 		StringWriter keyWriter = new StringWriter();
 		PEMWriter writer = new PEMWriter(keyWriter);
 		writer.writeObject(key);
@@ -132,6 +137,7 @@ public class Crypto {
 	}
 
 	public static String digest(byte[] buf, String algorithm) {
+		initialize();
 		MessageDigest dig;
 		try {
 			dig = MessageDigest.getInstance(algorithm);
@@ -146,13 +152,14 @@ public class Crypto {
 		return digest(str.getBytes(), algorithm);
 	}
 
-	public String sign(String data, KeyPair key) {
+	public static String sign(String data, KeyPair key) {
 		return sign(data, key.getPrivate());
 	}
 
 	final private static String SIGNING_ALGORITHM = "SHA1withRSA";
 
 	public static String sign(String data, PrivateKey key) {
+		initialize();
 		try {
 			Signature signer = Signature.getInstance(SIGNING_ALGORITHM);
 			signer.initSign(key);
@@ -167,6 +174,7 @@ public class Crypto {
 	}
 
 	public static boolean verify(String data, PublicKey key, String signature) {
+		initialize();
 		try {
 			Signature signer = Signature.getInstance(SIGNING_ALGORITHM);
 			signer.initVerify(key);
@@ -183,22 +191,27 @@ public class Crypto {
 	}
 
 	public static int getKeyBits(PrivateKey key) {
+		initialize();
 		return ((RSAKey)key).getModulus().bitLength();
 	}
 
 	public static int getKeyBits(PublicKey key) {
+		initialize();
 		return ((RSAKey)key).getModulus().bitLength();
 	}
 	
 	public static String getKeyID(String key) {
+		initialize();
 		return sha1(key.trim());
 	}
 	
 	private static Cipher getRSACipher () throws NoSuchAlgorithmException, NoSuchPaddingException {
+		initialize();
 		return Cipher.getInstance("RSA/None/PKCS1Padding");
 	}
 
 	public static String RSAPubkeyEncrypt(String plainText, PublicKey key) {
+		initialize();
 		try {
 			Cipher cipher = getRSACipher();
 			cipher.init(Cipher.ENCRYPT_MODE, key, getRandom());
@@ -247,6 +260,7 @@ public class Crypto {
 	}
 
 	public static String RSAPrivkeyDecrypt(String cipherText, PrivateKey key) {
+		initialize();
 		try {
 			Cipher cipher = getRSACipher();
 			cipher.init(Cipher.DECRYPT_MODE, key);
@@ -288,11 +302,8 @@ public class Crypto {
 	}
 
 	public static double getVer() {
+		initialize();
 		return ver;
-	}
-
-	public static void setVer(double ver) {
-		Crypto.ver = ver;
 	}
 }
 

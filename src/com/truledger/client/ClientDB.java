@@ -11,7 +11,7 @@ public class ClientDB {
 	private static final String SESSION_DB_NAME = "session";
 	private static final String ACCOUNT_DB_NAME = "account";
 	
-	/**
+ 	/**
 	 * Private key database
 	 * @author billstclair
 	 * Maps hash of passphrase to encrypted private key

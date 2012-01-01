@@ -19,10 +19,14 @@ public class Parser {
 	private static final String $PARSER_MSGKEY = "%msg%";
 
 	private FSDB mKeydb;
-	private Hashtable<String, PublicKey> mKeydict;
+	private Hashtable<String, PublicKey> mKeydict = new Hashtable<String, PublicKey>();
 	private ServerGetter mServerGetter;
 	private boolean mAlwaysVerifySigs = false;
 	private boolean mVerifySigs = true;
+	
+	public Parser(FSDB keydb) {
+		this.mKeydb = keydb;
+	}
 	
 	public interface ServerGetter {
 		public String getServer();
@@ -58,8 +62,8 @@ public class Parser {
 		}
 	}
 	
-	@SuppressWarnings("serial")
 	public class ParseException extends Exception {
+		private static final long serialVersionUID = 7806218768576438785L;
 		public ParseException(String msg) {
 			super(msg);
 		}
@@ -68,7 +72,6 @@ public class Parser {
 		}
 	}
 
-	/**
 	/**
 	 * Return a hash table, or signal en error, if the parse could not be done,
 	 * or an ID couldn't be found, or a signature was bad.
@@ -110,13 +113,32 @@ public class Parser {
 		}
 	}
 	
-	@SuppressWarnings("serial")
+	private static final int MAX_INTERNED_INTEGERS = 20;
+	private static Integer[] internedIntegers = new Integer[MAX_INTERNED_INTEGERS];
+	
+	/**
+	 * Like new Integer(num), but returns a shared Integer instance for small positive num
+	 * @param num an integer
+	 * @return new Integer(num), but with minimal consing
+	 */
+	public static Integer intern(int num) {
+		Integer res;
+		if (num>=0 && num<MAX_INTERNED_INTEGERS) {
+			res = internedIntegers[num];
+			if (res == null) {
+				res = internedIntegers[num] = new Integer(num);
+			}
+		} else res = intern(num);
+		return res;
+	}
+	
 	public class Dict extends Hashtable<Object, Object> {
+		private static final long serialVersionUID = -8236347145013574201L;
 		public Object get(int key) {
-			return this.get(new Integer(key));
+			return this.get(intern(key));
 		}
 		public void put(int key, Object value) {
-			this.put(new Integer(key), value);
+			this.put(intern(key), value);
 		}
 		public String stringGet(Object key) {
 			return (String)this.get(key);
@@ -126,12 +148,13 @@ public class Parser {
 		}
 	}
 	
-	@SuppressWarnings("serial")
 	public class DictList extends Vector<Dict> {
+
+		private static final long serialVersionUID = -2669357239706314493L;
 	}
 	
 	/**
-	 * Return a hash table, or signal en error, if the parse could not be done,
+	 * Return a hash table, or signal an error, if the parse could not be done,
 	 * or an ID couldn't be found, or a signature was bad.
 	 * left-paren, right-paren, comma, colon, and period are special chars.
 	 * They, and back-slash, are escaped by backslashes
@@ -184,7 +207,7 @@ public class Parser {
 				state = '(';
 			} else if (tok == ')') {
 				if (state == ',') {
-					if (key == null) throw new ParseException("Missing key", pos);
+					if (key != null) throw new ParseException("Missing key", pos);
 					if (dict == null) dict = new Dict();
 					dict.put(++dictidx, (value==null) ? "" : value);
 					value = null;
@@ -196,6 +219,7 @@ public class Parser {
 					throw new ParseException("Close paren not after value", pos);
 				}
 				msg = string.substring(start, pos+1);
+				state = ')';
 			} else if (tok == ':') {
 				if (state == ')') state = SIG_STATE;
 				else if (value == null) {
