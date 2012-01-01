@@ -233,15 +233,88 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
 		println("Total reads + writes: " + totalcnt);
     }
     
-    public static Parser.DictList parse(Parser parser, String rawmsg, String msg) {
+    private static Parser.DictList parse(Parser parser, String msg) {
     	try {
     		return parser.parse(msg);
     	} catch (Parser.ParseException e) {
-    		println("Parse exception on " + rawmsg + " - " + e);
-    		assertTrue(e.getMessage(), false);
+    		println("Parse exception on " + msg + " - " + e);
+    		assertTrue("Parse exception: " + e.getMessage(), false);
     		return null;
     	}
     }
+    
+    private class MessageSpec {
+    	public Object[] elements;
+    	public String[] names;
+    	public MessageSpec(Object[] elements, String[] names) {
+    		this.elements = elements;
+    		this.names = names;
+    	}
+    }
+    
+    private String makeMessage(Object[] elements, KeyPair privkey) {
+    	StringBuffer buf = new StringBuffer();
+    	buf.append('(');
+    	boolean first = true;
+    	for (Object o: elements) {
+    		if (!first) buf.append(',');
+    		else first = false;
+    		if (o instanceof String) {
+    			buf.append((String)o);
+    		} else if (o instanceof MessageSpec) {
+    			buf.append(this.makeMessage(((MessageSpec)o).elements, privkey));
+    		} else {
+    			assertTrue("Bad message element", false);
+    		}
+    	}
+    	buf.append(')');
+    	String msg = buf.toString();
+    	String sig = Crypto.sign(msg,  privkey);
+    	return msg + ":" + sig;
+    }
+    
+    private void doParserTest(Parser parser, MessageSpec spec, KeyPair privkey) throws Exception {
+    	this.doParserTest(parser, new MessageSpec[] {spec}, privkey);
+    }
+    
+    private void doParserTest(Parser parser, MessageSpec[] specs, KeyPair privkey) throws Exception {
+    	StringBuffer buf = new StringBuffer();
+    	boolean first = true;
+    	for (MessageSpec spec: specs) {
+    		if (!first) buf.append('.');
+    		else first = false;
+    		assertTrue("Spec element length same as names", spec.elements.length == spec.names.length);
+    		buf.append(this.makeMessage(spec.elements, privkey));
+    	}
+    	String msg = buf.toString();
+    	Parser.DictList parselist = parse(parser, msg);
+    	int len = parselist.size();
+    	assertTrue("Parselist len same as specs", len == specs.length);
+    	for (int i=0; i<len; i++) {
+    		this.affirmParse(parselist.get(i), specs[i]);
+    	}
+    	if (len == 1) {
+    		assertEquals("message matches", msg, Parser.getParseMsg(parselist.get(0)));
+    	}
+    }
+
+	private void affirmParse(Parser.Dict parse, MessageSpec spec) {
+		Object[] elements = spec.elements;
+		String[] names = spec.names;
+		for (int i=0; i<elements.length; i++) {
+			Object element = elements[i];
+			String name = names[i];
+			Object elt = parse.get(i);
+			if (element instanceof String) {
+				String desc = "parse[" + i + "]==" + ((name==null)?element:"<"+name+">"); 
+				assertEquals(desc, element, elt);
+			} else {
+				assertTrue("Subparse is a Parser.Dict", elt instanceof Parser.Dict);
+				affirmParse((Parser.Dict)elt, (MessageSpec)element);
+			}
+		}
+		assertNull("parse not too long", parse.get(elements.length));
+	}
     
     public void testParser() {
     	try {
@@ -252,21 +325,22 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     		String id = Crypto.getKeyID(pubstr);
     		pubkeyDB.put(id, pubstr);
     		String bankid = "940fcf32f4f7753529080da0ca026d5c2cc7abe1";
-    		String rawmsg = "(" + id + ",getinbox," + bankid + ",2182)";
-    		String sig = Crypto.sign(rawmsg, privkey);
-    		String msg = rawmsg + ":" + sig;
+    		
+    		Object[] elements = new Object[] {id, "getinbox", bankid, "2182"};
+    		String[] names = new String[] {"id", null, "bankid", null};
     		Parser parser = new Parser(pubkeyDB);
-    		Parser.DictList parselist = parse(parser, rawmsg, msg);
-    		assertTrue("One element in parse list", parselist.size() == 1);
-    		Parser.Dict parse = parselist.elementAt(0);
-    		assertTrue("parse[0]==<id>", parse.get(0).equals(id));
-    		assertTrue("parse[1]==getinbox", parse.get(1).equals("getinbox"));
-    		assertTrue("parse[2]==<bankid>", parse.get(2).equals(bankid));
-    		assertTrue("parse[3]==2182", parse.get(3).equals("2182"));
-    		assertTrue("parsemsg==rawmsg", Parser.getParseMsg(parse).equals(msg));
-    	} catch (IOException e) {
-			println("IOException: " + e);
-			assertTrue(false);
+    		MessageSpec spec1 = new MessageSpec(elements, names);
+    		doParserTest(parser, spec1, privkey);
+    		
+    		elements = new Object[] {id, "@getinbox", spec1};
+    		names = new String[] {"id", null, "msg"};
+    		MessageSpec spec2 = new MessageSpec(elements, names);
+    		doParserTest(parser, spec2, privkey);
+    		
+    		doParserTest(parser, new MessageSpec[] {spec1, spec2}, privkey);
+    	} catch (Exception e) {
+			println("Exception: " + e);
+			assertTrue("Exception: " + e, false);
     	}
     }
 }

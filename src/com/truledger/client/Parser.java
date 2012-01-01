@@ -252,6 +252,7 @@ public class Parser {
 				}
 				if (dict != null) res.add(dict);
 				dict = null;
+				dictidx = -1;
 				key = null;
 			} else {
 				if (state=='(' || state==',' || state==':') value = token.str;
@@ -286,6 +287,7 @@ public class Parser {
 					} else {
 						res.add(dict);
 						dict = null;
+						dictidx = -1;
 						needsig = false;
 						state = NULL_STATE;
 					}
