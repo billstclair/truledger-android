@@ -4,6 +4,7 @@ import java.io.IOException;
 
 import java.security.PublicKey;
 
+import java.util.Enumeration;
 import java.util.Hashtable;
 import java.util.Stack;
 import java.util.Vector;
@@ -379,95 +380,108 @@ public class Parser {
 	public static String getParseMsg(Dict parse) {
 		return parse.stringGet($PARSER_MSGKEY);
 	}
+	
+	/**
+	 * Return just the message part of a signed message
+	 * @param msg signed message
+	 * @return unsigned message
+	 */
+	public static String unsignedMessage(String msg) {
+		int pos = msg.indexOf("):");
+		return (pos >= 0) ? msg.substring(0, pos) : msg;
+	}
+	
+	/**
+	 * Return the first message of a compound message
+	 * @param msg compound message
+	 * @return first message (before first-non-escaped period)
+	 */
+	public static String firstMessage(String msg) {
+		int len = msg.length();
+		boolean escaped = false;
+		for (int i=0; i<len; i++) {
+			if (escaped) escaped = false;
+			else {
+				char chr = msg.charAt(i);
+				if (chr == '\\') escaped = true;
+				else if (chr == '.') return msg.substring(0, i);
+			}
+		}
+		return msg;
+	}
+	
+	public class OptionalString {
+		public String string;
+		
+		public OptionalString(String string) {
+			this.string = string;
+		}
+	}
+	
+	public class StringList extends Vector<String> {
+		private static final long serialVersionUID = 5736725495564468383L;
+	}
+	
+	public static final String $REST_KEY = "rest";
+	
+	/**
+	 * Assign names from pattern to elements in parse
+	 * @param parse An element of the DictList returned from parse()
+	 * @param pattern An array of String and OptionalString instances
+	 * @return A copy of parse, with names added from pattern,
+	 *         or null if pattern doesn't match parse
+	 */
+	public Dict matchArgs(Dict parse, Object[] pattern) throws ParseException {
+		Dict res = new Dict();
+		String name;
+		boolean isOptional;
+		for (int i=0; i<pattern.length; i++) {
+			Object elt = pattern[i];
+			if (elt instanceof OptionalString) {
+				name = ((OptionalString)elt).string;
+				isOptional = true;
+			} else if (elt instanceof String) {
+				name = (String)elt;
+				isOptional = false;
+			} else {
+				throw new ParseException("Bad element type in pattern");
+			}
+
+			if (name.equals($REST_KEY)) {
+				StringList list = new StringList();
+				for (int j=i;;j++) {
+					String val = parse.stringGet(j);
+					if (val == null) break;
+					list.add(val);
+					res.put(j,  val);
+				}
+				res.put($REST_KEY, list);
+			} else {
+				String val = parse.stringGet(i);
+				if (val == null) val = parse.stringGet(name);
+				if (val == null) {
+					if (!isOptional) return null;
+				} else {
+					res.put(name, val);
+					res.put(i,  val);
+				}
+			}
+		}
+		String msg = null;
+		Enumeration<Object> keys = parse.keys();
+		while (keys.hasMoreElements()) {
+			Object key = keys.nextElement();
+			if (key.equals($PARSER_MSGKEY)) {
+				msg = parse.stringGet(key);
+			} else if (res.get(key) == null) {
+				return null;
+			}
+		}
+		if (msg != null) res.put($PARSER_MSGKEY, msg);
+		return res;
+	}
+	
 /*		  
-	(defun unsigned-message (msg)
-	  "Return just the message part of a signed message, not including the signature.
-	   Assumes that the message will parse."
-	  (let ((pos (search "):" msg :from-end t)))
-	    (if pos
-	        (subseq msg 0 (1+ pos))
-	        msg)))
-
-	(defun first-message (msg)
-	  "Return the first message in a list of them.
-	   Assumes that message parses correctly."
-	  (let ((pos 0))
-	    (loop
-	       (setq pos (position #\. msg :start (1+ pos)))
-	       (unless pos (return msg))
-	       (unless (eql (aref msg (1- pos)) #\\)
-	         (return (subseq msg 0 pos))))))
-
-	(defun match-args (parse pattern)
-	  "parse is a hash table with numeric and string keys.
-	   pattern is a list of (key . value) pairs.
-	   a numeric key in pattern must match a numeric key in parse.
-	   a non-numeric key in pattern must correspond to a numeric key in parse
-	   at the element number in pattern or the same non-numeric key in parse.
-	   the result maps the non-numeric keys and values in $pattern and
-	   their positions, to the matching values in $parse."
-	  (loop
-	     with res = (make-hash-table :test 'equal)
-	     with name
-	     with optional
-	     for elt in pattern
-	     for i from 0
-	     for key = (if (listp elt) (car elt) i)
-	     for value = (if (listp elt) (cdr elt) elt)
-	     do
-	       (cond ((integerp key)
-	              (setq name value
-	                    optional nil))
-	             (t
-	              (setq name key
-	                    optional t)))
-	       (cond ((eq name :rest)
-	              (loop
-	                 for j from i
-	                 for val = (gethash j parse)
-	                 while val
-	                 collect val into rest
-	                 do
-	                   (setf (gethash j res) val)
-	                 finally
-	                   (setf (gethash :rest res) rest))
-	              (decf i))
-	             (t (let ((val (gethash i parse)))
-	                  (unless val (setq val (gethash name parse)))
-	                  (when (and (not optional) (not val)) (return nil))
-	                  (when val
-	                    (setf (gethash name res) val
-	                          (gethash i res) val)))))
-	     finally
-	       (maphash (lambda (key value)
-	                  (declare (ignore value))
-	                  (unless (or (eq key $PARSER-MSGKEY)
-	                              (gethash key res))
-	                    (return nil)))
-	                parse)
-	       (setf (gethash $PARSER-MSGKEY res)
-	             (gethash $PARSER-MSGKEY parse))
-	     (return res)))
-
-	(defun getarg (key args)
-	  (gethash key args))
-
-	(defun (setf getarg) (value key args)
-	  (setf (gethash key args) value))
-
-	(defun format-pattern (pattern)
-	  (let ((res "(")
-	        (comma nil))
-	    (loop for (key . value) across pattern
-	       do
-	         (when comma (setq res (strcat res ",")))
-	         (setq comma t)
-	       (if (numberp key)
-	           (setq res (format nil "~a<~a>" res value))
-	           (setq res (format nil "~a~a=<~a>" res key value))))
-	    (setq res (strcat res ")"))
-	    res))
-
 	(defun remove-signatures (msg)
 	  "Remove the signatures from a message"
 	  (loop
