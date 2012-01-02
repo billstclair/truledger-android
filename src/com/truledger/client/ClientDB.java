@@ -140,6 +140,33 @@ public class ClientDB {
 		}
 		return mAccountDB;
 	}
+	
+	public void close() {
+		if (mPrivkeyDB != null) {
+			mPrivkeyDB.close();
+			mPrivkeyDB.close();
+		}
+		if (mPubkeyDB != null) {
+			mPubkeyDB.close();
+			mPubkeyDB = null;
+		}
+		if (mServeridDB != null) {
+			mServeridDB.close();
+			mServeridDB = null;
+		}
+		if (mServerDB != null) {
+			mServerDB.close();
+			mServerDB = null;
+		}
+		if (mSessionDB != null) {
+			mSessionDB.close();
+			mSessionDB = null;
+		}
+		if (mAccountDB != null) {
+			mAccountDB.close();
+			mAccountDB = null;
+		}
+	}
 	  
 }
 

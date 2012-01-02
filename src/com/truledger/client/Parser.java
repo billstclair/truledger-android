@@ -460,8 +460,8 @@ public class Parser {
 				}
 				res.put($REST_KEY, list);
 			} else {
-				String val = parse.stringGet(i);
-				if (val == null) val = parse.stringGet(name);
+				Object val = parse.get(i);
+				if (val == null) val = parse.get(name);
 				if (val == null) {
 					if (!isOptional) return null;
 				} else {
@@ -545,7 +545,7 @@ public class Parser {
 					serverid = mServerGetter.getServer();
 				}
 			}
-			if (!Utility.isBlank(serverid) && serverid.equals(argsServerid)) {
+			if (!Utility.isBlank(serverid) && !serverid.equals(argsServerid)) {
 				throw new ParseException("serverid mismatch, sb: " + serverid + ", was: " + argsServerid);
 			}
 		}

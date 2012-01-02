@@ -11,6 +11,7 @@ import com.truledger.client.ClientDB;
 import com.truledger.client.Crypto;
 import com.truledger.client.FSDB;
 import com.truledger.client.Parser;
+import com.truledger.client.T;
 import com.truledger.client.TruledgerActivity;
 
 public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerActivity> {
@@ -273,11 +274,11 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     	return msg + ":" + sig;
     }
     
-    private void doParserTest(Parser parser, MessageSpec spec, KeyPair privkey) throws Exception {
-    	this.doParserTest(parser, new MessageSpec[] {spec}, privkey);
+    private Parser.DictList doParserTest(Parser parser, MessageSpec spec, KeyPair privkey) throws Exception {
+    	return this.doParserTest(parser, new MessageSpec[] {spec}, privkey);
     }
     
-    private void doParserTest(Parser parser, MessageSpec[] specs, KeyPair privkey) throws Exception {
+    private Parser.DictList doParserTest(Parser parser, MessageSpec[] specs, KeyPair privkey) throws Exception {
     	StringBuffer buf = new StringBuffer();
     	boolean first = true;
     	for (MessageSpec spec: specs) {
@@ -296,6 +297,7 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     	if (len == 1) {
     		assertEquals("message matches", msg, Parser.getParseMsg(parselist.get(0)));
     	}
+    	return parselist;
     }
 
 	private void affirmParse(Parser.Dict parse, MessageSpec spec) {
@@ -317,30 +319,64 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
 	}
     
     public void testParser() {
+    	ClientDB db = null;
     	try {
-    		ClientDB db = new ClientDB(mCtx);
+    		db = new ClientDB(mCtx);
     		ClientDB.PubkeyDB pubkeyDB = db.getPubkeyDB();
     		KeyPair privkey = Crypto.decodeRSAPrivateKey(key, password);
     		String pubstr = Crypto.encodeRSAPublicKey(privkey);
     		String id = Crypto.getKeyID(pubstr);
     		pubkeyDB.put(id, pubstr);
-    		String bankid = "940fcf32f4f7753529080da0ca026d5c2cc7abe1";
+    		final String serverid = "940fcf32f4f7753529080da0ca026d5c2cc7abe1";
+    		String req = "2182";
     		
-    		Object[] elements = new Object[] {id, "getinbox", bankid, "2182"};
-    		String[] names = new String[] {"id", null, "bankid", null};
+    		Object[] elements = new Object[] {id, T.GETINBOX, serverid, req};
+    		String[] names = new String[] {"id", null, T.SERVERID, null};
     		Parser parser = new Parser(pubkeyDB);
     		MessageSpec spec1 = new MessageSpec(elements, names);
-    		doParserTest(parser, spec1, privkey);
+    		Parser.DictList reqs1 = doParserTest(parser, spec1, privkey);
     		
-    		elements = new Object[] {id, "@getinbox", spec1};
-    		names = new String[] {"id", null, "msg"};
+    		elements = new Object[] {id, T.ATGETINBOX, spec1};
+    		names = new String[] {T.CUSTOMER, null, T.MSG};
     		MessageSpec spec2 = new MessageSpec(elements, names);
-    		doParserTest(parser, spec2, privkey);
-    		
+    		Parser.DictList reqs2 = doParserTest(parser, spec2, privkey);
+
     		doParserTest(parser, new MessageSpec[] {spec1, spec2}, privkey);
+
+    		// Test matcher
+    		Parser.ServerGetter getter = new Parser.ServerGetter() {
+    			public String getServer() {
+    				return serverid;
+    			}
+    		};
+    		parser.setServerGetter(getter);
+    		
+    		Parser.Dict match = parser.matchPattern(reqs1.get(0));
+    		assertEquals("reqs1 customer", id, match.get(T.CUSTOMER));
+    		assertEquals("reqs1 request", T.GETINBOX, match.get(T.REQUEST));
+    		assertEquals("reqs1 serverid", serverid, match.get(T.SERVERID));
+    		assertEquals("reqs1 req", req, match.get(T.REQ));
+    		assertEquals("reqs1 msg", Parser.getParseMsg(reqs1.get(0)), Parser.getParseMsg(match));
+    		
+    		match = parser.matchPattern(reqs2.get(0));
+    		assertEquals("reqs2 customer", id, match.get(T.CUSTOMER));
+    		assertEquals("reqs2 request", T.ATGETINBOX, match.get(T.REQUEST));
+    		assertEquals("reqs2 msg", Parser.getParseMsg(reqs2.get(0)), Parser.getParseMsg(match));
+    		
+    		Object msg = match.get(T.MSG);
+    		assertTrue("msg is a dict", msg instanceof Parser.Dict);
+    		Parser.Dict req21 = (Parser.Dict)msg;
+    		match = parser.matchPattern(req21);
+    		assertEquals("req21 customer", id, match.get(T.CUSTOMER));
+    		assertEquals("req21 request", T.GETINBOX, match.get(T.REQUEST));
+    		assertEquals("req21 serverid", serverid, match.get(T.SERVERID));
+    		assertEquals("req21 req", req, match.get(T.REQ));
+    		assertEquals("req21 msg", Parser.getParseMsg(req21), Parser.getParseMsg(match));
     	} catch (Exception e) {
-			println("Exception: " + e);
-			assertTrue("Exception: " + e, false);
+			println("Exception: " + e.getMessage());
+			assertTrue("Exception: " + e.getMessage(), false);
+    	} finally {
+    		if (db != null) db.close();
     	}
     }
 }
