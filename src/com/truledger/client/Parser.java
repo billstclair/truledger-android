@@ -29,8 +29,12 @@ public class Parser {
 		this.mKeydb = keydb;
 	}
 	
-	public interface ServerGetter {
+	public static interface ServerGetter {
 		public String getServer();
+	}
+	
+	public ServerGetter getServerGetter () {
+		return mServerGetter;
 	}
 	
 	public void setServerGetter (ServerGetter getter) {
@@ -63,7 +67,7 @@ public class Parser {
 		}
 	}
 	
-	public class ParseException extends Exception {
+	public static class ParseException extends Exception {
 		private static final long serialVersionUID = 7806218768576438785L;
 		public ParseException(String msg) {
 			super(msg);
@@ -86,7 +90,7 @@ public class Parser {
 		return this.parse(string, mVerifySigs);
 	}
 	
-	private class Token {
+	private static class Token {
 		public int pos;
 		public char tok;
 		public String str;
@@ -98,7 +102,7 @@ public class Parser {
 		}
 	}
 	
-	private class State {
+	private static class State {
 		public char state;
 		public Dict dict;
 		public int dictidx;
@@ -133,7 +137,7 @@ public class Parser {
 		return res;
 	}
 	
-	public class Dict extends Hashtable<Object, Object> {
+	public static class Dict extends Hashtable<Object, Object> {
 		private static final long serialVersionUID = -8236347145013574201L;
 		public Object get(int key) {
 			return this.get(intern(key));
@@ -149,8 +153,7 @@ public class Parser {
 		}
 	}
 	
-	public class DictList extends Vector<Dict> {
-
+	public static class DictList extends Vector<Dict> {
 		private static final long serialVersionUID = -2669357239706314493L;
 	}
 	
@@ -410,7 +413,7 @@ public class Parser {
 		return msg;
 	}
 	
-	public class OptionalString {
+	public static class OptionalString {
 		public String string;
 		
 		public OptionalString(String string) {
@@ -418,7 +421,7 @@ public class Parser {
 		}
 	}
 	
-	public class StringList extends Vector<String> {
+	public static class StringList extends Vector<String> {
 		private static final long serialVersionUID = 5736725495564468383L;
 	}
 	
@@ -481,79 +484,228 @@ public class Parser {
 		return res;
 	}
 	
-/*		  
-	(defun remove-signatures (msg)
-	  "Remove the signatures from a message"
-	  (loop
-	     with res = ""
-	     do
-	       (let ((tail (strstr msg #.(format nil "):~%")))
-	             (extralen 1)
-	             (matchlen 3)
-	             (tail2 (strstr msg #.(format nil "\\)\\:~%"))))
-	         (when (and tail2 (< (length tail2) (length tail)))
-	           (setq tail tail2
-	                 extralen 2
-	                 matchlen 5))
-	         (let* ((msglen (length msg))
-	                (i (- msglen (length tail)))
-	                dotpos leftpos commapos)
-	           (when (> msglen 0)
-	             (setq res (strcat res (subseq msg 0 (min msglen (+ i extralen))))))
-	           (setq msg (and tail (subseq tail matchlen))
-	                 dotpos (position #\. msg)
-	                 leftpos (position #\( msg)
-	                 commapos (position #\, msg))
-	           (cond ((null dotpos)
-	                  (setq dotpos leftpos))
-	                 (leftpos
-	                  (setq dotpos (min dotpos leftpos))))
-	           (cond ((null dotpos)
-	                  (setq dotpos commapos))
-	                 (commapos
-	                  (setq dotpos (min dotpos commapos))))
-	           (let ((parenpos (position #\) msg)))
-	             (cond ((and parenpos
-	                         (or (not dotpos) (< parenpos dotpos)))
-	                    (setq msg (subseq msg parenpos)))
-	                   (dotpos
-	                    (setq res (strcat res #.(format nil "~%")))
-	                    (setq msg (subseq msg dotpos)))
-	                   (t (loop-finish))))))
-	     finally
-	       (return (str-replace ",(" #.(format nil ",~%(") res))))
+	/**
+	 * Remove the signatures from a message string
+	 * @param msg the message string
+	 * @return msg sans signatures
+	 */
+	public static String removeSignatures(String msg) {
+		StringBuffer buf = new StringBuffer(msg.length());
+		while (true) {
+			String tail = Utility.strstr(msg, "):\n");
+			int extralen = 1;
+			int matchlen = 3;
+			String tail2 = Utility.strstr(msg,  "\\)\\:\n");
+			if ((tail2 != null) && (tail==null || tail2.length() < tail.length())) {
+				tail = tail2;
+				extralen = 2;
+				matchlen = 5;
+			}
+			int msglen = msg.length();
+			int i = msglen - tail.length();
+			if (msglen > 0) buf.append(msg.substring(0, Math.min(msglen, i + extralen)));
+			msg = (tail != null) ? tail.substring(matchlen) : "";
+			int dotpos = msg.indexOf('.');
+			int leftpos = msg.indexOf('(');
+			int commapos = msg.indexOf(',');
+			if (dotpos < 0) dotpos = leftpos;
+			else if (leftpos >= 0) dotpos = Math.min(dotpos, leftpos);
+			if (dotpos < 0) dotpos = commapos;
+			else if (commapos >= 0) dotpos = Math.min(dotpos,  commapos);
+			int parenpos = msg.indexOf(')');
+			if (parenpos>=0 && (dotpos<0 || parenpos<dotpos)) msg = msg.substring(parenpos);
+			else if (dotpos >= 0) {
+				buf.append("\n");
+				msg = msg.substring(dotpos);
+			} else break;
+		}
+		return buf.toString().replace(",(", ",\n(");
+	}
 
-	(defmethod match-pattern ((parser parser) req &optional serverid)
-	  (let* ((patterns (patterns))
-	         (request (gethash 1 req))
-	         (pattern (gethash request patterns)))
-	    (unless pattern
-	      (error "Unknown request: ~s" request))
-	    (setq pattern (nconc `(,$CUSTOMER ,$REQUEST) pattern))
-	    (let ((args (match-args req pattern)))
-	      (unless args
-	        (error "Request doesn't match pattern for ~s: ~s, ~s"
-	               request
-	               pattern
-	               (get-parsemsg req)))
-	      (let ((args-serverid (gethash $SERVERID args)))
-	        (when args-serverid
-	          (unless serverid
-	            (let ((server-getter (parser-server-getter parser)))
-	              (when server-getter
-	                (setq serverid (funcall server-getter)))))
-	          (unless (or (blankp serverid) (equal serverid args-serverid))
-	            (error "serverid mismatch, sb: ~s, was: ~s"
-	                   serverid args-serverid))))
-	      (when (> (length (gethash $NOTE args)) 4096)
-	        (error "Note too long. Max: 4096 chars"))
-	      args)))
+	/**
+	 * Find and match a pattern for a message
+	 * @param req The parsed message to match
+	 * @param serverid The ID of the server, if known. Will use getServerGetter().getServer() otherwise
+	 * @return A matched message, as returned from matchArgs()
+	 * @throws ParseException If req's request is unknown, req doesn't match any of the patterns, or
+	 *         req's server doesn't match the serverid.
+	 */
+	public Dict matchPattern(Dict req, String serverid) throws ParseException {
+		PatternHash patterns = getPatterns();
+		String request = req.stringGet(1);
+		Object[] pattern = patterns.get(request);
+		if (pattern == null) throw new ParseException("Unknown request: " + request);
+		Dict args = this.matchArgs(req,  pattern);
+		if (args == null) throw new ParseException("Request doesn't match pattern for "
+		  + request + ": " + pattern + ", " + getParseMsg(req));
+		String argsServerid = args.stringGet(T.SERVERID);
+		if (argsServerid != null) {
+			if (serverid == null) {
+				if (mServerGetter != null) {
+					serverid = mServerGetter.getServer();
+				}
+			}
+			if (!Utility.isBlank(serverid) && serverid.equals(argsServerid)) {
+				throw new ParseException("serverid mismatch, sb: " + serverid + ", was: " + argsServerid);
+			}
+		}
+		return args;
+	}
+	
+	public Dict matchPattern(Dict req) throws ParseException {
+		return this.matchPattern(req, null);
+	}
 
-	(defmethod match-message ((parser parser) (msg string))
-	  "Parse and match a message.
-	   Returns a hash table parameter names to values."
-	  (let ((reqs (parse parser msg)))
-	    (match-pattern parser (car reqs))))
- */
+	/**
+	 * Parse and match a message.
+	 * @param msg The message to parse and match
+	 * @return matchPattern(parse(msg)[0])
+	 * @throws ParseException if parsing or matching fails
+	 */
+	public Dict matchMessage(String msg) throws ParseException {
+		DictList reqs = this.parse(msg);
+		return this.matchPattern(reqs.elementAt(0));
+	}
+	
+	public static class PatternHash extends Hashtable<String, Object[]> {
+		private static final long serialVersionUID = -3417530618975114989L;
+		public PatternHash() {
+			super();
+		}
+		public PatternHash(int size) {
+			super(size);
+		}
+	}
+
+	private static PatternHash patterns = null;
+	
+	public static PatternHash getPatterns() {
+		PatternHash pats = patterns;
+		if (pats == null) {
+			int len = patternsource.length;
+			pats = new PatternHash(len);
+			for (int i=0; i<len; i++) {
+				Object[] pat = patternsource[i];
+				String request = (String)pat[0];
+				int patlen = pat.length;
+				Object[] pattern = new Object[patlen+1];
+				pattern[0] = T.CUSTOMER;
+				pattern[1] = T.REQUEST;
+				for (int j=1; j<patlen; j++) {
+					pattern[j+1] = pat[j];
+				}
+				pats.put(request,  pattern);
+			}
+			patterns = pats;
+		}
+		return pats;
+	}
+	
+	private static OptionalString os(String str) {
+		return new OptionalString(str);
+	}
+		
+	private static Object[][] patternsource =
+		{
+		{T.SERVERID, T.PUBKEY, os(T.COUPON)},
+		{T.ID, T.SERVERID, T.ID},
+		{T.BALANCE, T.SERVERID, T.TIME, T.ASSET, T.AMOUNT, os(T.ACCT)},
+		{T.OUTBOXHASH, T.SERVERID, T.TIME, T.COUNT, T.HASH, os(T.TWOPHASECOMMIT)},
+		{T.BALANCEHASH, T.SERVERID, T.TIME, T.COUNT, T.HASH, os(T.TWOPHASECOMMIT)},
+		{T.GETFEES, T.SERVERID, T.REQ, os(T.OPERATION)},
+		{T.SETFEES, T.TIME, T.COUNT},
+		{T.SPEND, T.SERVERID, T.TIME, T.ID, T.ASSET, T.AMOUNT, os(T.NOTE)},
+		{T.GETASSET, T.SERVERID, T.REQ, T.ASSET},
+		{T.ASSET, T.SERVERID, T.ASSET, T.SCALE, T.PRECISION, T.ASSETNAME},
+		{T.STORAGE, T.SERVERID, T.TIME, T.ASSET, T.PERCENT},
+		{T.STORAGEFEE, T.SERVERID, T.TIME, T.ASSET, T.AMOUNT},
+		{T.FRACTION, T.SERVERID, T.TIME, T.ASSET, T.AMOUNT},
+		{T.REGISTER, T.SERVERID, T.PUBKEY, os(T.NAME)},
+		{T.GETREQ, T.SERVERID},
+		{T.SPENDACCEPT, T.SERVERID, T.TIME, T.ID, os(T.NOTE)},
+		{T.SPENDREJECT, T.SERVERID, T.TIME, T.ID, os(T.NOTE)},
+		{T.GETOUTBOX, T.SERVERID, T.REQ},
+		{T.GETBALANCE, T.SERVERID, T.REQ, os(T.ACCT), os(T.ASSET)},
+		{T.GETINBOX, T.SERVERID, T.REQ},
+		{T.PROCESSINBOX, T.SERVERID, T.TIME, T.TIMELIST},
+		{T.STORAGEFEES, T.SERVERID, T.REQ},
+		{T.GETTIME, T.SERVERID, T.REQ},
+		{T.COUPONENVELOPE, T.ID, T.ENCRYPTEDCOUPON},
+		{T.GETVERSION, T.SERVERID, T.REQ},
+		{T.VERSION, T.VERSION, T.TIME},
+		{T.WRITEDATA, T.SERVERID, T.TIME, T.ANONYMOUS, T.KEY, T.DATA},
+		{T.READDATA, T.SERVERID, T.REQ, T.KEY, os(T.SIZE)},
+		{T.GRANT, T.SERVERID, T.TIME, T.ID, T.PERMISSION, os(T.GRANT)},
+		{T.DENY, T.SERVERID, T.REQ, T.ID, T.PERMISSION},
+		{T.PERMISSION, T.SERVERID, T.REQ, os(T.GRANT)},
+		{T.AUDIT, T.SERVERID, T.REQ, T.ASSET},
+		{T.OPENSESSION, T.SERVERID, T.REQ, os(T.TIMEOUT), os(T.INACTIVETIME)},
+		{T.CLOSESESSION, T.SERVERID, T.REQ, T.SESSIONID},
+		{T.BACKUP, T.REQ, $REST_KEY},
+		{T.COMMIT, T.SERVERID, T.TIME},
+		{T.GETFEATURES, T.SERVERID, T.REQ},
+		{T.FEATURES, T.SERVERID, T.TIME, T.FEATURES},
+		{T.LASTTRANSACTION, T.SERVERID, T.REQ},
+
+		//, Server, signed, messages
+		{T.FAILED, T.MSG, T.ERRMSG},
+		{T.TOKENID, T.TOKENID},
+		{T.REGFEE, T.SERVERID, T.TIME, T.ASSET, T.AMOUNT},
+		{T.TRANFEE, T.SERVERID, T.TIME, T.ASSET, T.AMOUNT},
+		{T.FEE, T.SERVERID, T.TIME, T.OPERATION, T.ASSET, T.AMOUNT},
+		{T.TIME, T.ID, T.TIME},
+		{T.INBOX, T.TIME, T.MSG},
+		{T.REQ, T.ID, T.REQ},
+		{T.COUPON, T.SERVERURL, T.COUPON, T.ASSET, T.AMOUNT, os(T.NOTE)},
+		{T.COUPONNUMBERHASH, T.COUPON},
+		{T.ATREGISTER, T.MSG},
+		{T.ATOUTBOXHASH, T.MSG},
+		{T.ATBALANCEHASH, T.MSG},
+		{T.ATGETINBOX, T.MSG},
+		{T.ATBALANCE, T.MSG},
+		{T.ATSETFEES, T.MSG},
+		{T.ATSPEND, T.MSG},
+		{T.ATTRANFEE, T.MSG},
+		{T.ATFEE, T.MSG},
+		{T.ATASSET, T.MSG},
+		{T.ATSTORAGE, T.MSG},
+		{T.ATSTORAGEFEE, T.MSG},
+		{T.ATFRACTION, T.MSG},
+		{T.ATPROCESSINBOX, T.MSG},
+		{T.ATSTORAGEFEES, T.MSG},
+		{T.ATSPENDACCEPT, T.MSG},
+		{T.ATSPENDREJECT, T.MSG},
+		{T.ATGETOUTBOX, T.MSG},
+		{T.ATCOUPON, T.COUPON, T.SPEND},
+		{T.ATCOUPONENVELOPE, T.MSG},
+		{T.ATWRITEDATA, T.ID, T.TIME, T.ANONYMOUS, T.KEY},
+		{T.ATREADDATA, T.ID, T.TIME, T.DATA},
+		{T.ATGRANT, T.MSG},
+		{T.ATDENY, T.MSG},
+		{T.ATPERMISSION, T.MSG},
+		{T.ATAUDIT, T.MSG},
+		{T.ATOPENSESSION, T.MSG, T.CIPHERTEXT},
+		{T.CLOSESESSION, T.MSG},
+		{T.ATBACKUP, T.REQ},
+		{T.ATCOMMIT, T.MSG}
+		};
 	 
 }
+
+//////////////////////////////////////////////////////////////////////
+///
+/// Copyright 2011-2012 Bill St. Clair
+///
+/// Licensed under the Apache License, Version 2.0 (the "License")
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions
+/// and limitations under the License.
+///
+//////////////////////////////////////////////////////////////////////

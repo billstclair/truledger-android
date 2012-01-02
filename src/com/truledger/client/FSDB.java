@@ -191,7 +191,7 @@ public class FSDB {
 	 * @throws SQLException if there was an error inserting a new row
 	 */
 	private long getDirID(String dirpath, boolean createIfNot, boolean createIntermediates) {
-		if (Utility.isNull(dirpath)) return EMPTY_DIR_INDEX;
+		if (Utility.isBlank(dirpath)) return EMPTY_DIR_INDEX;
 		dirpath = normalizeDirpath(dirpath);
 		Cursor cursor = mDb.query(TOPLEVEL_TABLE_NAME, new String[] {KEY_TOPLEVEL_ROWID},
 				KEY_TOPLEVEL_DIRPATH + "=?", new String[] {dirpath}, null, null, null);
@@ -268,7 +268,7 @@ public class FSDB {
 	 * @return contents
 	 */
 	public String put(String dirpath, String filename, String contents) throws SQLException {
-		boolean notnull = !Utility.isNull(contents);
+		boolean notnull = !Utility.isBlank(contents);
 		long fileid = this.getFileID(dirpath, filename, notnull);
 		String where = KEY_VALUE_ROWID + "=" + fileid;
 		if (!notnull) {

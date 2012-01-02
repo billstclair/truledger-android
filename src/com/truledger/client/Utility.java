@@ -72,8 +72,19 @@ public class Utility {
 	  return Base64.decode(buf);
   }
   
-  public static boolean isNull(String x) {
+  public static boolean isBlank(String x) {
 	  return x == null || x.equals("");
+  }
+  
+  /**
+   * Return the substring of str that begins with pattern
+   * @param str
+   * @param pattern
+   * @return substring of str beginning with pattern or NULL
+   */
+  public static String strstr(String str, String pattern) {
+	  int pos = str.indexOf(pattern);
+	  return (pos >= 0) ? str.substring(pos) : null;
   }
 }
 
