@@ -1,15 +1,28 @@
 package com.truledger.client;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.security.KeyPair;
 import java.security.PublicKey;
+import java.util.ArrayList;
+import java.util.List;
+
+import org.apache.http.HttpResponse;
+import org.apache.http.NameValuePair;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.message.BasicNameValuePair;
 
 import android.content.Context;
+import android.net.http.AndroidHttpClient;
 
 /**
  * A Truledger client API. Talks the protocol of truledger.com
  * @author billstclair
  */
 public class Client {
+	Context ctx;
 	ClientDB db;
 	Parser parser;
 	ClientDB.PubkeyDB pubkeydb;
@@ -42,15 +55,12 @@ public class Client {
 	// Called *msg* in the lisp code
 	String processMsg;
 	
-	class ServerProxy {
-		// to do
-	}
-	
 	/**
 	 * Constructor
 	 * @param ctx The context from the main activity. Needed for the database.
 	 */
 	public Client(Context ctx) {
+		this.ctx = ctx;
 		db = new ClientDB(ctx);
 		pubkeydb = db.getPubkeyDB();
 		parser = new Parser(pubkeydb);
@@ -123,18 +133,23 @@ public class Client {
   "Login, create a new session, and return a sessionid."
     (login client passphrase)
     (make-session client passphrase))
+*/
+	
+	public void logout() {
+		if (id != null) {
+			this.removeSession();
+			id = null;
+		}
+		privkey = null;
+		serverid = null;
+		ServerProxy s = server;
+		if (s != null) {
+			server = null;
+			s.close();
+		}
+	}
 
-(defmethod logout ((client client))
-  (when (id client)
-    (remove-session client)
-    (setf (id client) nil))
-  (let ((privkey (privkey client)))
-    (when privkey
-      (setf (privkey client) nil)
-      (rsa-free privkey))
-    (setf (serverid client) nil
-          (server client) nil)))
-
+/*
 ;; All the API methods below require the user to be logged in.
 ;; id and privkey must be set.
 
@@ -2943,6 +2958,7 @@ public class Client {
 	
 	public String passphraseHash (String passphrase) {
 		return Crypto.sha1(passphrase);
+	}
 
 /*
 (defmethod custmsg ((client client) &rest args)
@@ -3552,7 +3568,16 @@ public class Client {
           (setq idx 0
                 key (hex2bin (sha1 key) :string)
                 keylen (length key)))))))
+*/
 
+	/**
+	 * @return The path to the user session directory in the AccountDB
+	 */
+	public String getUsersessionkey() {
+		return id + "/" + T.SESSION;
+	}
+	
+/*
 (defmethod usersessionkey ((client client))
   "Return the database key for the user's session hash."
   (append-db-keys $ACCOUNT (id client) $SESSION))
@@ -3560,10 +3585,6 @@ public class Client {
 (defmethod usersessionhash ((client client))
   "Return the user's session hash."
   (db-get (db client) (usersessionkey client)))
-
-(defun sessionkey (sessionhash)
-  "Return the database key for a session hash"
-  (append-db-keys $SESSION sessionhash))
 
 (defmethod session-passphrase ((client client) sessionid)
   "Return the passphrase corresponding to a session id"
@@ -3591,17 +3612,23 @@ public class Client {
         (setf (db-get db (sessionkey newhash)) passcrypt
               (db-get db usersessionkey) newhash)))
     sessionid))
+*/
 
-(defmethod remove-session ((client client))
-  "Remove the current user's session"
-  (let* ((db (db client))
-         (usersessionkey (usersessionkey client)))
-    (with-db-lock (db usersessionkey)
-      (let ((oldhash (db-get db usersessionkey)))
-        (when oldhash
-          (setf (db-get db (sessionkey oldhash)) nil
-                (db-get db usersessionkey) nil))))))
+	/**
+	 * Remove the current user's session 
+	 */
+	public void removeSession() {
+		ClientDB.SessionDB sessiondb = db.getSessionDB();
+		ClientDB.AccountDB accountdb = db.getAccountDB();
+		String usersessionkey = this.getUsersessionkey();
+		String oldhash = accountdb.get(usersessionkey);
+		if (oldhash != null) {
+			accountdb.put(usersessionkey, null);
+			sessiondb.put(oldhash, null);
+		}
+	}
 
+/*
 (defmethod user-preference-key (client pref)
   "Preferences"
   (append-db-keys $ACCOUNT (id client) $PREFERENCE pref))
@@ -3684,31 +3711,81 @@ public class Client {
              (msg (sendmsg client $CLOSESESSION serverid req sessionid)))
         (unpack-servermsg client msg $ATCLOSESESSION)
         (remove-client-crypto-session id)))))
+*/
+	// For reporting client errors
+	public static class ClientException extends Exception {
+		private static final long serialVersionUID = -7740576192574990988L;
+		public ClientException(String msg) {
+			super(msg);
+		}
+		public ClientException(String msg, Exception e) {
+			super((msg==null ? "" : msg + ": ") + e.getMessage());
+		}
+	}
+	
+	/**
+	 * Create a new ServerProxy
+	 * @param url The URL of the server
+	 * @return 
+	 */
+	public ServerProxy makeServerProxy(String url) {
+		return new ServerProxy(url);
+	}
+	
+	/**
+	 * This class controls the connection to the Truledger server
+	 * It also encapsulates the wire encryption.
+	 * @author billstclair
+	 */
+	public class ServerProxy {
+		String url;
+		AndroidHttpClient httpClient;
+		
+		public ServerProxy(String url) {
+			this.url = url;
+		}
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-;;; Connection to the server
-;;;
+		public void close() {
+			AndroidHttpClient c = httpClient;
+			if (c != null) {
+			   httpClient = null;
+			   c.close();
+			}
+		}
+		
+		public String post(String msg, boolean debug) throws ClientException {
+			AndroidHttpClient c = httpClient;
+			if (c == null) {
+				c = httpClient = AndroidHttpClient.newInstance("Truledger-Android", ctx);
+			}
 
-(defmethod make-server-proxy ((client client) url)
-  (make-instance 'serverproxy :url url :client client))
+			// Add parameters to the post request
+			HttpPost post = new HttpPost(url);
+			List<NameValuePair> nvp = new ArrayList<NameValuePair>(2);
+			nvp.add(new BasicNameValuePair("msg", msg));
+			if (debug) {
+				nvp.add(new BasicNameValuePair("debugmsgs", "true"));
+			}
+			try {
+				post.setEntity(new UrlEncodedFormEntity(nvp));
 
-(defclass serverproxy ()
-  ((url :type string
-        :initarg :url
-        :accessor url)
-   (client :type client
-           :initarg :client
-           :accessor client)
-   (stream :initform nil
-           :accessor post-stream)))
+				// Send the post to the server
+				HttpResponse response = httpClient.execute(post);
 
-(defmethod finalize ((proxy serverproxy))
-  (let ((stream (post-stream proxy)))
-    (when stream
-      (setf (post-stream proxy) nil)
-      (ignore-errors (close stream)))))
+				// Turn the response into a string
+				InputStream stream = response.getEntity().getContent();
+				StringBuilder res = new StringBuilder();
+				BufferedReader rd = new BufferedReader(new InputStreamReader(stream));
+				String line;
+				while ((line = rd.readLine()) != null) res.append(line);
+				return res.toString();
+			} catch (Exception e) {
+				throw new ClientException(null, e);
+			}
+		}
+	}
 
+/*
 ;; Don't know what makes sense here, but not infinite
 (defparameter *max-redirect-count* 5)
 

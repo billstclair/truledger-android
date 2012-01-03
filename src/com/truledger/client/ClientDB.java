@@ -127,7 +127,7 @@ public class ClientDB {
 		return mServerDB;
 	}
 	  
-	public SessionDB SessionDB() {
+	public SessionDB getSessionDB() {
 		if (mSessionDB == null) {
 			mSessionDB = new SessionDB(mCtx);
 		}
