@@ -272,7 +272,7 @@ public class Parser {
 						if (mVerifySigs || mAlwaysVerifySigs) {
 							PublicKey pubkey = this.getPubkey(id, dict);
 							if (pubkey == null) {
-								throw new ParseException("Sianature without ID", pos);
+								throw new ParseException("Pubkey unknown for id: " + id, pos);
 							}
 							if (!Crypto.verify(msg, pubkey, token.str)) {
 								throw new ParseException("Signature verification failed", pos);
@@ -310,9 +310,8 @@ public class Parser {
 		PublicKey pubkey = (mKeydb!=null) ? mKeydict.get(id) : null;
 		try {
 			if (pubkey == null) {
-				String dict1 = dict.stringGet("register");
-				if (dict1 == null) dict1 = (String)dict.get("serverid");
-				if (dict1 != null) {
+				String dict1 = dict.stringGet(1);
+				if (dict1.equals("register") || dict1.equals("serverid")) {
 					String keystr = dict.stringGet(dict1.equals("register") ? 3 : 2);
 					pubkey = Crypto.decodeRSAPublicKey(keystr);
 					String pubkeyid = Crypto.getKeyID(keystr);

@@ -70,6 +70,25 @@ public class Client {
 	// API methods
 	
 	/**
+	 * Close the server connection and the databases
+	 */
+	public void close() {
+		this.logout();
+		if (db != null) {
+			db.close();
+			db = null;
+		}
+	}
+	
+	public Parser getParser() {
+		return parser;
+	}
+	
+	public ClientDB getDB() {
+		return db;
+	}
+	
+	/**
 	 * Create a new user with the given passphrase, error if already there.
 	 * If privkey is a string, use that as the private key.
 	 * If it is an integer, default 3072, create a new private key with that many bits
@@ -3775,13 +3794,20 @@ public class Client {
 				// Turn the response into a string
 				InputStream stream = response.getEntity().getContent();
 				StringBuilder res = new StringBuilder();
-				BufferedReader rd = new BufferedReader(new InputStreamReader(stream));
+				BufferedReader rd = new BufferedReader(new InputStreamReader(stream), 4096);
 				String line;
-				while ((line = rd.readLine()) != null) res.append(line);
+				while ((line = rd.readLine()) != null) {
+					res.append(line);
+					res.append("\n");
+				}
 				return res.toString();
 			} catch (Exception e) {
-				throw new ClientException(null, e);
+				throw new ClientException(e.getClass().getName(), e);
 			}
+		}
+		
+		public String post(String msg) throws ClientException {
+			return this.post(msg, false);
 		}
 	}
 

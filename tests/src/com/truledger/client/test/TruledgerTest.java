@@ -7,6 +7,7 @@ import java.util.Arrays;
 
 import android.test.ActivityInstrumentationTestCase2;
 
+import com.truledger.client.Client;
 import com.truledger.client.ClientDB;
 import com.truledger.client.Crypto;
 import com.truledger.client.FSDB;
@@ -377,6 +378,28 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
 			assertTrue("Exception: " + e.getMessage(), false);
     	} finally {
     		if (db != null) db.close();
+    	}
+    }
+    
+    public void testServerProxy() {
+    	Client client = new Client(mCtx);
+    	Client.ServerProxy server = client.makeServerProxy("http://truledger.com/");
+    	Parser.Dict req = null;
+    	try {
+    		String msg = server.post("(0,serverid,0):0");
+    		println(msg);
+    		Parser parser = client.getParser();
+    		req = parser.matchMessage(msg);
+    	} catch (Exception e) {
+    		assertTrue(e.getClass().getName() + ": " + e.getMessage(), false);
+    	} finally {
+    		server.close();
+    		client.close();
+    	}
+    	if (req != null) {
+    		assertTrue("customer not blank", req.get(T.CUSTOMER) != null);
+    		assertEquals("register message", req.get(T.REQUEST), T.REGISTER);
+    		assertEquals("customer = serverid", req.get(T.CUSTOMER), req.get(T.SERVERID));
     	}
     }
 }

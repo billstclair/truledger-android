@@ -77,7 +77,7 @@ public class Crypto {
 
 	public static KeyPair decodeRSAPrivateKey(String key, final String password) throws IOException {
 		initialize();
-		Reader keyReader = new StringReader(key);
+		Reader keyReader = new StringReader(key.trim());
 		PasswordFinder pwd = new PasswordFinder() {
 			public char[] getPassword() {
 				return password.toCharArray();
@@ -98,7 +98,7 @@ public class Crypto {
 
 	public static PublicKey decodeRSAPublicKey(String key) throws IOException {
 		initialize();
-		Reader keyReader = new StringReader(key);
+		Reader keyReader = new StringReader(key.trim());
 		PEMReader reader = new PEMReader(keyReader);
 		return (PublicKey)reader.readObject();
 	}
