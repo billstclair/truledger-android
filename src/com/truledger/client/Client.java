@@ -1,11 +1,12 @@
 package com.truledger.client;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.security.KeyPair;
-import java.security.PublicKey;
 import java.util.ArrayList;
+import java.util.Hashtable;
 import java.util.List;
 
 import org.apache.http.HttpResponse;
@@ -30,7 +31,7 @@ public class Client {
 	// Initialized by login() and newuser()
 	String id;
 	KeyPair privkey;
-	PublicKey pubkey;
+	String pubkeystr;
 	
 	// Initialized by setserver() and addserver()
 	ServerProxy server;
@@ -88,71 +89,104 @@ public class Client {
 		return db;
 	}
 	
+	public void newuser(String passphrase, KeyPair privkey) throws ClientException {
+		this.newuser(passphrase, privkey, true);
+	}
+	
+	public void newuser(String passphrase, int keysize) throws ClientException {
+		if (db.getPrivkeyDB().get(passphrase)!=null) {
+			throw new ClientException("Passphrase already has an associated private key");
+		}
+		KeyPair privkey = Crypto.RSAGenerateKey(keysize);
+		newuser(passphrase, privkey, false);
+	}
+	
+	// API methods 
+
 	/**
 	 * Create a new user with the given passphrase, error if already there.
 	 * If privkey is a string, use that as the private key.
 	 * If it is an integer, default 3072, create a new private key with that many bits
 	 * User is logged in when this returns successfully."
 	 */
-	public void newuser(String passphrase, KeyPair privkey) {
+	public void newuser(String passphrase, KeyPair privkey, boolean checkPassphrase) throws ClientException {
 		String hash = passphraseHash(passphrase);
+		this.logout();
+		ClientDB.PrivkeyDB privkeydb = db.getPrivkeyDB();
+
+		if (checkPassphrase && privkeydb.get(passphrase)!=null) {
+			throw new ClientException("Passphrase already has an associated private key");
+		}
+
+		String pubstr, id, privstr;
+		try {
+			pubstr = Crypto.encodeRSAPublicKey(privkey);
+			id = Crypto.getKeyID(pubstr);
+			privstr = Crypto.encodeRSAPrivateKey(privkey, passphrase);
+		} catch (IOException e) {
+			throw new ClientException("While encoding public key for new private key", e);
+		}
+		
+		privkeydb.put(hash,  privstr);
+		this.id = id;
+		this.privkey = privkey;
+		try {
+			this.pubkeystr = Crypto.encodeRSAPublicKey(privkey);
+		} catch (IOException e) {
+			throw new ClientException(e);
+		}
+	}
+	
+	/**
+	 * Look up the private key for a passphrase
+	 * @param passphrase
+	 * @return The private key
+	 * @throws ClientException If no private key is known for passphrase or if we fail to decrypt the string for it
+	 */
+	public KeyPair getPrivkey(String passphrase) throws ClientException {
+		String hash = passphraseHash(passphrase);
+		String privstr = db.getPrivkeyDB().get(hash);
+		if (privstr == null) {
+			throw new ClientException("No account for passphrase in database");
+		}
+		try {
+			return Crypto.decodeRSAPrivateKey(privstr,  passphrase);
+		} catch (IOException e) {
+			throw new ClientException(null, e);
+		}
+	}
+	
+	/**
+	 * Log in locally
+	 * @param passphrase
+	 * @throws ClientException if there is no user associated with passphrase,
+	 *         or if we somehow fail to encode the public key to a string.
+	 */
+	public void login(String passphrase) throws ClientException {
+		this.logout();
+		KeyPair privkey = this.getPrivkey(passphrase);
+		String pubkeystr;
+		try {
+			pubkeystr = Crypto.encodeRSAPublicKey(privkey);
+		} catch (IOException e) {
+			throw new ClientException(e);
+		}
+		String id = Crypto.getKeyID(pubkeystr);
+		this.id = id;
+		this.privkey = privkey;
+		this.pubkeystr = pubkeystr;
 	}
 
-/*
-;; API Methods
-
-(defmethod newuser ((client client) &key passphrase (privkey 3072))
-   (let ((db (db client))
-        (hash (passphrase-hash passphrase)))
-
-    (logout client)
-
-    (when (db-get db $PRIVKEY hash)
-      (error "Passphrase already has an associated private key"))
-
-    (when (integerp privkey)
-      ;; privkey is size in bits for new private key
-      (setq privkey (rsa-generate-key privkey)))
-
-    (let* ((pubkey (encode-rsa-public-key privkey))
-           (id (pubkey-id pubkey))
-           (privkey-str (encode-rsa-private-key privkey passphrase)))
-      (setf (db-get db $PRIVKEY hash) privkey-str)
-      (db-put db (pubkeykey id) (format nil "~a~%" (trim pubkey)))
-
-      (setf (id client) id
-            (privkey client) privkey
-            (pubkey client) pubkey))))
-
-(defmethod get-privkey ((client client) passphrase)
-  (let ((db (db client))
-        (hash (passphrase-hash passphrase)))
-    (decode-rsa-private-key
-     (or (db-get db $PRIVKEY hash)
-         (error "No account for passphrase in database"))
-     passphrase)))
-
-(defmethod login ((client client) passphrase)
-  "Log in with the given passphrase. Error if no user associated with passphrase."
-  (logout client)
-  (let* ((privkey (get-privkey client passphrase))
-         (pubkey (encode-rsa-public-key privkey))
-         (id (pubkey-id pubkey)))
-    (setf (id client) id
-          (privkey client) privkey
-          (pubkey client) pubkey)))
-
-(defmethod login-with-sessionid ((client client) sessionid)
-  (let ((passphrase (session-passphrase client sessionid)))
-    (unwind-protect (login client passphrase)
-      (destroy-password passphrase))
-    (setf (syncedreq-p client) t))) ;; no server sync for session login
-
-(defmethod login-new-session ((client client) passphrase)
-  "Login, create a new session, and return a sessionid."
-    (login client passphrase)
-    (make-session client passphrase))
-*/
+	public void loginWithSessionid(String sessionid) throws ClientException {
+		String passphrase = this.sessionPassphrase(sessionid);
+		this.login(passphrase);
+		this.isSyncedreq = true;  // Don't need a server sync after a session login
+	}
+	
+	public void loginNewSession(String passphrase) throws ClientException {
+		this.login(passphrase);
+		this.makeSession(passphrase);
+	}
 	
 	public void logout() {
 		if (id != null) {
@@ -3592,15 +3626,19 @@ public class Client {
 	/**
 	 * @return The path to the user session directory in the AccountDB
 	 */
-	public String getUsersessionkey() {
+	public String userSessionKey() {
 		return id + "/" + T.SESSION;
 	}
 	
+	public String sessionPassphrase(String sessionid) {
+		return null;    // TO DO
+	}
+	
+	public String makeSession(String passphrase) {
+		return null;   // TO DO
+	}
+	
 /*
-(defmethod usersessionkey ((client client))
-  "Return the database key for the user's session hash."
-  (append-db-keys $ACCOUNT (id client) $SESSION))
-
 (defmethod usersessionhash ((client client))
   "Return the user's session hash."
   (db-get (db client) (usersessionkey client)))
@@ -3622,7 +3660,7 @@ public class Client {
   (let* ((db (db client))
          (sessionid (newsessionid))
          (passcrypt (xorcrypt sessionid passphrase))
-         (usersessionkey (usersessionkey client)))
+         (usersessionkey (usersessioney client)))
     (with-db-lock (db usersessionkey)
       (let ((oldhash (db-get db usersessionkey)))
         (when oldhash
@@ -3639,7 +3677,7 @@ public class Client {
 	public void removeSession() {
 		ClientDB.SessionDB sessiondb = db.getSessionDB();
 		ClientDB.AccountDB accountdb = db.getAccountDB();
-		String usersessionkey = this.getUsersessionkey();
+		String usersessionkey = this.userSessionKey();
 		String oldhash = accountdb.get(usersessionkey);
 		if (oldhash != null) {
 			accountdb.put(usersessionkey, null);
@@ -3665,18 +3703,19 @@ public class Client {
   (let* ((db (db client))
          (key (user-preference-key client pref)))
     (setf (db-get db key) value)))
-
-(defvar *non-encryption-server-hash*
-  (make-equal-hash))
-
-(defun no-server-encryption-p (serverid)
-  (gethash serverid *non-encryption-server-hash*))
-
-(defun (setf no-server-encryption-p) (value serverid)
-  (if value
-      (setf (gethash serverid *non-encryption-server-hash*) value)
-      (remhash serverid *non-encryption-server-hash*)))
-
+*/
+	private static final Hashtable<String,String> nonEncryptionServerHash = new Hashtable<String, String>();
+	
+	public static boolean isNoServerEncryption(String serverid) {
+		return !nonEncryptionServerHash.get(serverid).equals(null);
+	}
+	
+	public static void setIsNoServerEncryption(String serverid, boolean value) {
+		if (value) nonEncryptionServerHash.put(serverid,  serverid);
+		else nonEncryptionServerHash.remove(serverid);
+	}
+	
+/*
 (defvar *inside-opensession-p* nil)
 
 (defmethod opensession ((client client) &key
@@ -3738,7 +3777,10 @@ public class Client {
 			super(msg);
 		}
 		public ClientException(String msg, Exception e) {
-			super((msg==null ? "" : msg + ": ") + e.getMessage());
+			super((msg==null ? "" : msg + " - ") + e.getClass().getName() + ": " + e.getMessage());
+		}
+		public ClientException(Exception e) {
+			super(null, e);
 		}
 	}
 	
@@ -3802,50 +3844,15 @@ public class Client {
 				}
 				return res.toString();
 			} catch (Exception e) {
-				throw new ClientException(e.getClass().getName(), e);
+				throw new ClientException(e);
 			}
 		}
 		
 		public String post(String msg) throws ClientException {
 			return this.post(msg, false);
 		}
-	}
 
 /*
-;; Don't know what makes sense here, but not infinite
-(defparameter *max-redirect-count* 5)
-
-(defmethod post ((proxy serverproxy) url &optional parameters)
-  (let* ((stream (post-stream proxy)))
-    (multiple-value-bind (res status headers uri stream)
-        (block nil
-          (handler-bind ((error (lambda (c)
-                                  (declare (ignore c))
-                                  (when stream
-                                    (ignore-errors (close stream))
-                                    (setf (post-stream proxy) nil)
-                                    ;; I don't know if this is necessary
-                                    (return (drakma:http-request
-                                             url
-                                             :method :post
-                                             :parameters parameters
-                                             :form-data t
-                                             :redirect *max-redirect-count*
-                                             :close nil
-                                             :keep-alive t))))))
-            (drakma:http-request
-             url
-             :method :post
-             :parameters parameters
-             :form-data t
-             :redirect *max-redirect-count*
-             :stream stream
-             :close nil
-             :keep-alive t)))
-      (declare (ignore uri))
-      (setf (post-stream proxy) stream)
-      (values res status headers))))
-
 (defun ensure-client-crypto-session (client)
   (and (id client)
        (serverid client)
@@ -3887,7 +3894,19 @@ public class Client {
         (when (equal msg *msg*)
           (setf *msg* newmsg))))
     newmsg))
+*/
 
+	/**
+	 * This will eventually add the wire encryption to post().
+	 * For now, it just calls post()
+	 * @param msg
+	 * @return
+	 */
+	public String process(String msg) throws ClientException {
+		return this.post(msg);
+	}
+	
+/*
 (defmethod process ((proxy serverproxy) msg)
   (let* ((url (url proxy))
          (client (client proxy))
@@ -3976,7 +3995,11 @@ public class Client {
           (debugmsg "<b>===RETURNED</b>: ~a~%" (and msg (trimmsg res))))
 
         res))))
-
+*/
+	
+	}
+	
+/*
 (defun trimmsg (msg)
   (let* ((msg (remove-signatures msg))
          (tokens (mapcar #'cdr (tokenize msg)))
