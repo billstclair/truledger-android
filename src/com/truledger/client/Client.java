@@ -4,9 +4,12 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.MalformedURLException;
+import java.net.URL;
 import java.security.KeyPair;
 import java.security.SecureRandom;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Hashtable;
 import java.util.List;
 
@@ -191,6 +194,11 @@ public class Client {
 		this.pubkeystr = pubkeystr;
 	}
 
+	/**
+	 * Log in using a sessionid to get the user's passphrase
+	 * @param sessionid
+	 * @throws ClientException
+	 */
 	public void loginWithSessionid(String sessionid) throws ClientException {
 		String passphrase = this.sessionPassphrase(sessionid);
 		this.login(passphrase);
@@ -215,54 +223,121 @@ public class Client {
 			s.close();
 		}
 	}
+	
+	/**
+	 * Return the ID of the logged-in users
+	 * @return The logged-in user ID or null if there is none.
+	 */
+	public String currentUser() {
+		return (privkey != null) ? id : null; 
+	}
 
+	// All the API methods below require the user to be logged in.
+	// id and privkey must be set.
+	
+	/**
+	 * Ensure that the user is logged in
+	 * @throws ClientException if no user is logged in, i.e. currentUser() returns null.
+	 */
+	public String requireCurrentUser() throws ClientException {
+		String id = this.currentUser();
+		if (id == null) throw new ClientException("Not logged in");
+		return id;
+	}
+
+	/**
+	 * For returning information about servers
+	 * @author billstclair
+	 */
+	public static class ServerInfo implements Comparable<ServerInfo> {
+		public String id;
+		public String name;
+		public String url;
+		public ServerInfo(String id, String name, String url) {
+			this.id = id;
+			this.name = name;
+			this.url = url;
+		}
+		public int compareTo(ServerInfo info) {
+			return name.compareTo(info.name);
+		}
+	}
+	
+	/**
+	 * Return information about a server
+	 * @param serverid The ID of the server
+	 * @param all true to return non-null even if the current logged-in user isn't known to the server
+	 * @return
+	 */
+	public ServerInfo getServer(String serverid, boolean all) {
+		if (!all && this.getUserReq(serverid)==null) return null;
+		return new ServerInfo(serverid, getServerProp(T.NAME, serverid), getServerProp(T.URL, serverid));
+	}
+	
+	/**
+	 * Return information about a server
+	 * @param serverid The ID of the server
+	 * @return null if the current logged-in user isn't known to the server
+	 */
+	public ServerInfo getServer(String serverid) {
+		return this.getServer(serverid, false);
+	}
+	
+	/**
+	 * Return information about the current logged-in server
+	 * @return shouldn't be null
+	 */
+	public ServerInfo getServerInfo() {
+		return this.getServer(serverid, false);
+	}
+	
+	/**
+	 * Return info about the servers known to the logged-in user, sorted by name
+	 * @return
+	 * @throws ClientException if no user is logged in
+	 */
+	public ServerInfo[] getServers() throws ClientException {
+		String id = this.requireCurrentUser();
+		String[] servers = db.getAccountDB().contents(id + '/' + T.SERVER);
+		ServerInfo[] res = new ServerInfo[servers.length];
+		for (int i=0; i<servers.length; i++) {
+			String serverid = servers[i];
+			res[i] = this.getServer(serverid, true);
+		}
+		Arrays.sort(res);
+		return res;
+	}
+	
+	/**
+	 * @param url
+	 * @return true if url is properly formed
+	 */
+	public boolean isUrl(String url) {
+		if (Utility.isBlank(url)) return false;
+		try {
+			new URL(url);
+		} catch (MalformedURLException e) {
+			return false;
+		}
+		return true;
+	}
+
+	/**
+	 * @param url
+	 * @param number
+	 * @return [<url> <number>]
+	 */
+	public String encodeCoupon(String url, String number) {
+		return '[' + url + ' ' + number + ']';
+	}
+	
+	public String[] decodeCoupon(String coupon) {
+		coupon = coupon.trim();
+		int len = coupon.length();
+		// To do
+		return null;
+	}
 /*
-;; All the API methods below require the user to be logged in.
-;; id and privkey must be set.
-
-(defmethod current-user ((client client))
-  "Return current user ID if logged in, otherwise nil."
-  (and (privkey client) (id client)))
-
-(defmethod require-current-user ((client client))
-  (or (current-user client) (error "Not logged in")))
-
-(defstruct server-info
-  id
-  name
-  url)
-
-(defmethod getserver ((client client) serverid &optional all)
-  "Returns a SERVER-INFO instance, or NIL if it doesn't find the SERVERID.
-   If ALL is true, return the server even if the current user isn't logged in."
-  (and (or all (userreq client serverid))
-       (make-server-info :id serverid
-                         :name (serverprop client $NAME serverid)
-                         :url (serverprop client $URL serverid))))
-
-(defmethod getservers ((client client) &optional all)
-  "Return all the servers known by the current user,
-   as a list of SERVER instances.
-   (SERVER-PUBKEYSIG SERVER) will be blank if the user has no account at SERVER."
-  (let* ((db (db client))
-         (id (require-current-user client))
-         (servers (db-contents db $ACCOUNT id $SERVER))
-         (res nil))
-    (dolist (serverid servers)
-      (let ((server (getserver client serverid all)))
-        (when server (push server res))))
-
-    (sort (nreverse res) #'string-lessp :key #'server-info-name)))
-
-(defun url-p (url)
-  "Returns true if $url might be a properly-formed URL."
-  (ignore-errors
-    (and (not (blankp url))
-         (puri:parse-uri url))))
-
-(defun encode-coupon (url number)
-  (format nil "[~a ~a]" url number))
-
 (defun decode-coupon (coupon)
   (check-type coupon string)
   (handler-case
@@ -3018,7 +3093,7 @@ public class Client {
   (fee-assetid (getfees client)))
 */
 	
-	public String passphraseHash (String passphrase) {
+	public String passphraseHash(String passphrase) {
 		return Crypto.sha1(passphrase);
 	}
 
@@ -3095,16 +3170,13 @@ public class Client {
 
 (defun pubkeykey (id)
   (append-db-keys $PUBKEY id))
-
-(defmethod serverkey ((client client) &optional prop (serverid (serverid client)))
-  (let ((key (append-db-keys $SERVER serverid)))
-    (if prop
-        (append-db-keys key prop)
-        key)))
-
-(defmethod serverprop ((client client) prop &optional (serverid (serverid client)))
-  (db-get (db client) (serverkey client prop serverid)))
-
+*/
+	
+	public String getServerProp(String prop, String serverid) {
+		return db.getServerDB().get(serverid, prop);
+	}
+	
+/*
 (defmethod assetkey ((client client) &optional assetid)
   (let ((key (serverkey client $ASSET)))
     (if assetid
@@ -3142,26 +3214,41 @@ public class Client {
             (dotcat res "." fees)
             (setf res fees))))
     res))
+*/
+	
+	public String userServerKey(String serverid) {
+		return id + '/' + T.SERVER + '/' + serverid;
+	}
 
-(defmethod userserverkey ((client client) &optional prop (serverid (serverid client)))
-  (let ((key (append-db-keys $ACCOUNT (id client) $SERVER serverid)))
-    (if prop
-        (append-db-keys key prop)
-        key)))
+	public String userServerKey() {
+		return userServerKey(serverid);
+	}
 
-(defmethod userserverprop ((client client) &optional prop (serverid (serverid client)))
-  (db-get (db client) (userserverkey client prop serverid)))
+	public String userServerProp(String prop, String serverid) {
+		return db.getAccountDB().get(userServerKey(serverid), prop);
+	}
 
-(defmethod (setf userserverprop) (value (client client) prop
-                                &optional (serverid (serverid client)))
-  (setf (db-get (db client) (userserverkey client prop serverid)) value))
+	public String userServerProp(String prop) {
+		return userServerProp(prop, serverid);
+	}
 
-(defmethod userreqkey ((client client) &optional (serverid (serverid client)))
-  (userserverkey client $REQ serverid))
-
-(defmethod userreq ((client client) &optional (serverid (serverid client)))
-  (db-get (db client) (userreqkey client serverid)))
-
+	public void setUserServerProp(String prop, String serverid, String value) {
+		db.getAccountDB().put(userServerKey(serverid), prop, value);
+	}
+	
+	public void setUserServerProp(String prop, String value) {
+		this.setUserServerProp(prop,  serverid, value);
+	}
+		
+	public String getUserReq(String serverid) {
+		return db.getAccountDB().get(userServerKey(serverid), T.REQ);
+	}
+	
+	public String userReq() {
+		return getUserReq(serverid);
+	}
+	
+/*
 (defmethod usertimekey ((client client))
   (userserverkey client $TIME))
 
