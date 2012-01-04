@@ -41,6 +41,25 @@ public class Utility {
 	  return out.toString();
   }
   
+  public static int hexcode2int(int hexcode) {
+	  if (hexcode>=(int)'0' && hexcode<=(int)'9') return hexcode - (int)'0';
+	  else if (hexcode>=(int)'a' && hexcode<=(int)'f') return hexcode - (int)'a' + 10;
+	  else if (hexcode>=(int)'A' && hexcode<=(int)'F') return hexcode - (int)'A' + 10;
+	  else return 0;
+  }
+  
+  public static String hex2bin(String hex) {
+	  byte[] hexbuf = hex.getBytes();
+	  int len = hexbuf.length;
+	  StringBuilder buf = new StringBuilder(len/2);
+	  for (int i=0; i<len; i+=2) {
+		  int b0 = hexbuf[i];
+		  int b1 = hexbuf[i+1];
+		  buf.append((char)(hexcode2int(b0)<<4 + hexcode2int(b1)));
+	  }
+	  return buf.toString();
+  }
+  
   public static String base64Encode(byte buf[], int columns) {
 	  byte[] buf64 = Base64.encode(buf);
 	  int len = buf64.length;

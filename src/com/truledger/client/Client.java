@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.security.KeyPair;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Hashtable;
 import java.util.List;
@@ -89,10 +90,24 @@ public class Client {
 		return db;
 	}
 	
+	// API methods 
+
+	/**
+	 * Create a new user with the given passphrase and private key
+	 * @param passphrase The passphrase
+	 * @param privkey The private key
+	 * @throws ClientException if the passphrase already has an associated private key
+	 */
 	public void newuser(String passphrase, KeyPair privkey) throws ClientException {
 		this.newuser(passphrase, privkey, true);
 	}
 	
+	/**
+	 * Create a new user with the given passphrase and a newly generated private key
+	 * @param passphrase The passphrase
+	 * @param keysize The size in bits of the new key
+	 * @throws ClientException If the passphrase already has an associated private key
+	 */
 	public void newuser(String passphrase, int keysize) throws ClientException {
 		if (db.getPrivkeyDB().get(passphrase)!=null) {
 			throw new ClientException("Passphrase already has an associated private key");
@@ -101,13 +116,12 @@ public class Client {
 		newuser(passphrase, privkey, false);
 	}
 	
-	// API methods 
-
 	/**
-	 * Create a new user with the given passphrase, error if already there.
-	 * If privkey is a string, use that as the private key.
-	 * If it is an integer, default 3072, create a new private key with that many bits
-	 * User is logged in when this returns successfully."
+	 * Create a new user with the given passphrase and private key
+	 * @param passphrase The passphrase
+	 * @param privkey The prvate key
+	 * @param checkPassphrase If true, error if the passphrase already has an associated private key
+	 * @throws ClientException If there is an erro encoding the public key for the new private key (unlikely)
 	 */
 	public void newuser(String passphrase, KeyPair privkey, boolean checkPassphrase) throws ClientException {
 		String hash = passphraseHash(passphrase);
@@ -212,11 +226,6 @@ public class Client {
 
 (defmethod require-current-user ((client client))
   (or (current-user client) (error "Not logged in")))
-
-(defmethod user-pubkey ((client client) &optional (id (id client)))
-  "Return pubkey of a user, default logged-in user"
-  (let ((db (db client)))
-    (and id (db-get db $PUBKEY id))))
 
 (defstruct server-info
   id
@@ -3592,37 +3601,42 @@ public class Client {
                    (or hashcnt 0) (or hash "") $TWOPHASECOMMIT)
           (custmsg client $OUTBOXHASH serverid transtime
                    (or hashcnt 0) (or hash ""))))))
-
-;; Web client session support
-
-(defun newsessionid ()
-  "Return a new, random, session ID"
-  (let ((res (bin2hex (urandom-bytes 20))))
-    (if (< (length res) 40)
-        (strcat (fill-string (- 40 (length res))) res)
-        res)))
-
-(defun xorcrypt (key string)
-  "xor hashed copies of KEY with STRING and return the result.
-   This is a really simple encryption that only really works if
-   KEY is known to be random, e.g. the output of (newsessionid)."
-  (let* ((key (hex2bin (sha1 key) :string))
-         (idx 0)
-         (keylen (length key))
-         (len (length string)))
-    (with-output-to-string (s)
-      (dotimes (i len)
-        (write-char (code-char
-                     (logxor (char-code (aref key idx))
-                             (char-code (aref string i))))
-                    s)
-        (incf idx)
-        (when (>= idx keylen)
-          (setq idx 0
-                key (hex2bin (sha1 key) :string)
-                keylen (length key)))))))
 */
 
+	// Web client session support
+	
+	/**
+	 * Generate a new sessionID
+	 * @return a 40-digit random hex string
+	 */
+	public static String newSessionid() {
+		SecureRandom random = Crypto.getRandom();
+		byte[] bytes = new byte[20];
+		random.nextBytes(bytes);
+		return Utility.bin2hex(bytes);
+	}
+
+	/**
+	 * xor hashed copies of KEY with STRING and return the result.
+     * This is a really simple encryption that only really works if
+     * KEY is known to be random, e.g. the output of newSessionid()
+	 * @param key
+	 * @param string
+	 * @return
+	 */
+	public static String xorcrypt(String key, String string) {
+		int len = string.length();
+		StringBuilder buf = new StringBuilder(len);
+		String keybin = Utility.hex2bin(Crypto.sha1(key));
+		int keylen = keybin.length();
+		int idx = 0;
+		for (int i=0; i<len; i++) {
+			buf.append((char)((int)string.charAt(i) ^ (int)keybin.charAt(idx)));
+			if (++idx >= keylen) idx = 0;
+		}
+		return buf.toString();		
+	}
+	
 	/**
 	 * @return The path to the user session directory in the AccountDB
 	 */
@@ -3630,47 +3644,45 @@ public class Client {
 		return id + "/" + T.SESSION;
 	}
 	
-	public String sessionPassphrase(String sessionid) {
-		return null;    // TO DO
+	/**
+	 * Get the hash to look up the session encrypted passphrase for the current user
+	 * @return the hash
+	 */
+	public String userSessionHash() {
+		return db.getAccountDB().get(this.userSessionKey());
 	}
 	
+	/**
+	 * Get the passphrase for a session
+	 * @param sessionid The ID of the session
+	 * @return The user passphrase for the session
+	 * @throws ClientException If sessionid has no saved encrypted passphrase
+	 */
+	public String sessionPassphrase(String sessionid) throws ClientException {
+		String passcrypt = db.getSessionDB().get(Crypto.sha1(sessionid));
+		if (passcrypt == null) throw new ClientException("No passphrase for session");
+		return xorcrypt(sessionid, passcrypt);
+	}
+	
+	/**
+	 * Make a new session for the current user
+	 * @param passphrase The user's passphrase
+	 * @return the new session ID
+	 */
 	public String makeSession(String passphrase) {
-		return null;   // TO DO
+		String sessionid = newSessionid();
+		String passcrypt = xorcrypt(sessionid, passphrase);
+		String userSessionKey = this.userSessionKey();
+		ClientDB.AccountDB accountDB = db.getAccountDB();
+		ClientDB.SessionDB sessionDB = db.getSessionDB();
+		String oldhash = accountDB.get(userSessionKey);
+		if (oldhash != null) sessionDB.put(oldhash, null);
+		String newhash = Crypto.sha1(sessionid);
+		sessionDB.put(newhash, passcrypt);
+		accountDB.put(userSessionKey,  newhash);
+		return sessionid;
 	}
 	
-/*
-(defmethod usersessionhash ((client client))
-  "Return the user's session hash."
-  (db-get (db client) (usersessionkey client)))
-
-(defmethod session-passphrase ((client client) sessionid)
-  "Return the passphrase corresponding to a session id"
-  (session-passphrase (db client) sessionid))
-
-(defmethod session-passphrase ((db fsdb) sessionid)
-  (let ((passcrypt (or (db-get db (sessionkey (sha1 sessionid)))
-                       (error "No passphrase for session"))))
-    (xorcrypt sessionid passcrypt)))
-
-(defmethod make-session ((client client) passphrase)
-  "Create a new user session, encoding $passphrase with a new session id.
-   Return the new session id.
-   If the user already has a session stored with another session id,
-   remove that one first."
-  (let* ((db (db client))
-         (sessionid (newsessionid))
-         (passcrypt (xorcrypt sessionid passphrase))
-         (usersessionkey (usersessioney client)))
-    (with-db-lock (db usersessionkey)
-      (let ((oldhash (db-get db usersessionkey)))
-        (when oldhash
-          (setf (db-get db (sessionkey oldhash)) nil)))
-      (let ((newhash (sha1 sessionid)))
-        (setf (db-get db (sessionkey newhash)) passcrypt
-              (db-get db usersessionkey) newhash)))
-    sessionid))
-*/
-
 	/**
 	 * Remove the current user's session 
 	 */
