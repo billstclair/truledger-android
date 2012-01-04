@@ -312,7 +312,7 @@ public class Client {
 	 * @param url
 	 * @return true if url is properly formed
 	 */
-	public boolean isUrl(String url) {
+	public static boolean isUrl(String url) {
 		if (Utility.isBlank(url)) return false;
 		try {
 			new URL(url);
@@ -331,46 +331,47 @@ public class Client {
 		return '[' + url + ' ' + number + ']';
 	}
 	
-	public String[] decodeCoupon(String coupon) {
+	/**
+	 * Parses a string of the form [<url> <coupon>] into a 2-element array.
+	 * Allows the starting or ending square bracket to be missing.
+	 * Allows a comma instead of a space between url and coupon.
+	 * Does no validation of url or coupon.
+	 * @param coupon The string to parse
+	 * @return new String[] {<url>, <coupon>}
+	 * @throws ClientException
+	 */
+	public static String[] decodeCoupon(String coupon) throws ClientException {
 		coupon = coupon.trim();
 		int len = coupon.length();
-		// To do
-		return null;
+		if (len == 0) throw new ClientException("Blank coupon");
+		int start = (coupon.charAt(0) == '[') ? 1 : 0;
+		int end = (coupon.charAt(len-1) == ']') ? len-1 : len;
+		if (start > 0 || end < len) {
+			coupon = coupon.substring(start, end);
+		}
+		coupon = coupon.replace(',', ' ');
+		int pos = coupon.indexOf(' ');
+		if (pos < 0) throw new ClientException("Malformed coupon");
+		return new String[] {coupon.substring(0, pos), coupon.substring(pos+1).trim()};
 	}
-/*
-(defun decode-coupon (coupon)
-  (check-type coupon string)
-  (handler-case
-      (let* ((coupon (trim coupon))
-             (len (length coupon)))
-        (when (eql #\] (aref coupon (1- len)))
-          (setq coupon (subseq coupon 0 (1- len))))
-        (when (eql #\[ (aref coupon 0))
-          (setq coupon (subseq coupon 1)))
-        (setq coupon (substitute #\space #\, coupon))
-        (let* ((pos (position #\space coupon))
-               (pos2 (position #\space coupon
-                               :start pos
-                               :test (lambda (x y) (not (eql x y))))))
-          (values (subseq coupon 0 pos)
-                  (subseq coupon pos2))))
-    (error ()
-      (error "Malformed coupon"))))
-  
+	
+	/**
+	 * Parse a [<url> <coupon>] string and validate the syntax of <url> and <coupon>
+	 * @param coupon The string to parse
+	 * @return new String[] {<url>, <coupon>}
+	 * @throws ClientException If the parse fails, or <url> or <coupon> are malformed.
+	 */
+	public static String[] parseCoupon(String coupon) throws ClientException {
+		String[] res = decodeCoupon(coupon);
+		String url = res[0];
+		String number = res[1];
+		if (!isUrl(url)) throw new ClientException("Coupon url isn't a url: " + url);
+		if (!Utility.isCouponNumber(number)) throw new ClientException("Coupon number malformed: " + number);
+		return res;
+	}
 
-(defun parse-coupon (coupon)
-  "Parse a coupon into serverid, url, and coupon number.
-   Returns two values:
-     1) url
-     2) coupon-number
-   Coupon can be [$url,$coupon_number] or
-   ($serverid,coupon,$url,$coupon_number,$asset,$amount,note:$note)"
-  (multiple-value-bind (url coupon-number) (decode-coupon coupon)
-    (unless (url-p url)
-      (error "Coupon url isn't a url: ~s" url))
-    (unless (coupon-number-p coupon-number)
-      (error "Coupon number malformed: ~a" coupon-number))
-    (values url coupon-number)))
+	
+/*
 
 (defmethod verify-coupon ((client client) coupon serverid url)
   "Verify that a message is a valid coupon.
@@ -3126,50 +3127,74 @@ public class Client {
          (args (match-serverreq client req request serverid)))
     (setf (getarg $UNPACK-REQS-KEY args) reqs) ;; save parse results
     args))
+*/
+	
+	/**
+	 * Unpack a server message that has already been parsed.
+	 * @param req The parsed server message
+	 * @param request if non-NULL, must match the T.REQUEST in message
+	 * @param serverid The serverid expected in the server message
+	 * @return The matched args
+	 * @throws ClientException
+	 */
+	public Parser.Dict matchServerReq(Parser.Dict req, String request, String serverid) throws ClientException {
+		try {
+			Parser.Dict args = parser.matchPattern(req, serverid);
+			if (serverid!=null && serverid!=args.get(T.CUSTOMER)) {
+				throw new ClientException("Return message not from server");
+			}
+			String argsRequest = args.stringGet(T.REQUEST);
+			if (T.FAILED.equals(argsRequest)) {
+				throw new ClientException("Server error: " + args.stringGet(T.ERRMSG));
+			}
+			if (request!=null && !request.equals(argsRequest)) {
+				throw new ClientException("Wrong return type from server, sb: " + request + ", was: " + argsRequest);
+			}
+			Parser.Dict msg = (Parser.Dict)args.get(T.MSG);
+			Parser.Dict msgargs = (msg != null) ? parser.matchPattern(msg) : null;
+			if (msgargs != null) {
+				String msgargsServerid = msgargs.stringGet(T.SERVERID);
+				if (msgargsServerid!=null && msgargsServerid!=serverid) {
+					throw new ClientException("While matching server-wrapped msg: serverid mismatch");
+				}
+				args.put(T.MSG, msgargs);
+			}
+			return args;
+		} catch (Exception e) {
+			throw new ClientException(e);
+		}
+		
+	}
 
-(defmethod match-serverreq ((client client) req &optional request serverid)
-  "Unpack a server message that has already been parsed."
-  (unless (not (blankp serverid)) (setq serverid (serverid client)))
-  (let* ((parser (parser client))
-         (args (match-pattern parser req serverid)))
-    (unless (or (not serverid) (equal (getarg $CUSTOMER args) serverid))
-      (error "Return message not from server"))
-    (when (equal (getarg $REQUEST args) $FAILED)
-      (error "Server error: ~a" (getarg $ERRMSG args)))
-    (when (and request (not (equal (getarg $REQUEST args) request)))
-      (error "Wrong return type from server; sb: ~s, was: ~s"
-             request (getarg $REQUEST args)))
-    (let* ((msg (getarg $MSG args))
-           (msgargs (and msg (match-pattern parser (getarg $MSG args)))))
-      (when msgargs
-        (let ((msgargs-serverid (getarg $SERVERID msgargs)))
-          (when (and msgargs-serverid (not (equal msgargs-serverid serverid)))
-            (error "While matching server-wrapped msg: serverid mismatch")))
-        (setf (getarg $MSG args) msgargs)))
-    args))
+	/**
+	 * Package up information about storage fees 
+	 * @author billstclair
+	 */
+	public static class StorageInfo {
+		public String percent;
+		public String fraction;
+		public String fractime;
+		public StorageInfo(String percent, String fraction, String fractime) {
+			this.percent = percent;
+			this.fraction = fraction;
+			this.fractime = fractime;
+		}
+	}
 
-(defmethod client-storage-info ((client client) assetid)
-  "Get the values necessary to compute the storage fee.
-   Returns three values:
-    1) percent - The storage fee
-    2) fraction - the fraction balance for assetid
-    3) fractime - the time of the fraction"
-  (let* ((db (db client))
-         (asset (or (getasset client assetid) (return-from client-storage-info nil)))
-         (issuer (asset-issuer asset))
-         (percent (asset-percent asset)))
-    (cond ((equal issuer (id client)) nil)
-          ((or (not percent) (bc-zerop percent)) nil)
-          (t (let* ((key (userfractionkey client assetid))
-                    (msg (db-get db key)))
-               (if msg
-                   (let ((args (getarg $MSG (unpack-servermsg
-                                             client msg $ATFRACTION))))
-                     (values percent (getarg $AMOUNT args) (getarg $TIME args)))
-                   (values percent "0" "0")))))))
+/*
+	public StorageInfo getClientStorageInfo(String assetid) {
+		AssetInfo asset = this.getAsset(assetid);
+		if (asset == null) return null;
+		String issuer = asset.issuer;
+		String percent = asset.percent;
+		if (id.equals(issuer)) return null;
+		if (percent==null || BC.isZero(percent)) return null;
+		String msg = db.getAccountDB().get(this.userFractionKey(), assetid);
+		if (msg == null) return new StorageInfo(percent, "0", "0");
+		Parser.Dict args = (Parser.Dict)(this,unpackServerMsg(msg, T.FRACTION).get(T.MSG));
+		return new StorageInfo(percent, args.stringGet(T.AMOUNT), args.stringGet(T.TIME));
+	}
 
-(defun pubkeykey (id)
-  (append-db-keys $PUBKEY id))
 */
 	
 	public String getServerProp(String prop, String serverid) {
@@ -3244,7 +3269,7 @@ public class Client {
 		return db.getAccountDB().get(userServerKey(serverid), T.REQ);
 	}
 	
-	public String userReq() {
+	public String getUserReq() {
 		return getUserReq(serverid);
 	}
 	

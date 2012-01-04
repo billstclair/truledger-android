@@ -105,6 +105,23 @@ public class Utility {
 	  int pos = str.indexOf(pattern);
 	  return (pos >= 0) ? str.substring(pos) : null;
   }
+  
+  public static boolean isHexChar(char chr) {
+	  int code = (int)chr;
+	  return (code>=(int)'0' && code<=(int)'9') ||
+			 (code>=(int)'a' && code<=(int)'f') ||
+			 (code>=(int)'A' && code<=(int)'F');
+  }
+  
+  public static boolean isCouponNumber(String couponNumber) {
+	  if (couponNumber == null) return false;
+	  int len = couponNumber.length();
+	  if (len != 40) return false;
+	  for (int i=0; i<len; i++) {
+		  if (!isHexChar(couponNumber.charAt(i))) return false;
+	  }
+	  return true;	  
+  }
 }
 
 //////////////////////////////////////////////////////////////////////
