@@ -370,133 +370,215 @@ public class Client {
 		return res;
 	}
 
+	/**
+	 * Verify that a message is a valid coupon.
+	 * Check that it is actually signed by the server that it claims
+	 * to be from.
+	 * Ask the server whether a coupon of that number is still valid.
+	 * @param coupon The coupon: "[<url> <number>]
+	 * @param serverid The ID of the server at URL
+	 * @param url The web address of the server
+	 * @return The matched coupon msg from the server
+	 * @throws ClientException if the coupon won't parse, or it isn't valid at the server.
+	 */
+	public Parser.Dict verifyCoupon(String coupon, String serverid, String url) throws ClientException {
+		String couponNumber = parseCoupon(coupon)[1];
+		this.verifyServer(url, serverid);
+		String msg = "(0," + T.SERVERID + ",0," + couponNumber + "):0";
+		ServerProxy server = new ServerProxy(url);
+		Parser.DictList reqs;
+		try {
+			msg = server.process(msg);
+			reqs = parser.parse(msg);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		} finally {
+			server.close();
+		}
+		this.matchServerReq(reqs.get(0), T.REGISTER, serverid);
+		if (reqs.size() != 2) throw new ClientException("verifycoupon: expected 2 messages from server");
+		return this.matchServerReq(reqs.get(1), T.COUPONNUMBERHASH, serverid);
+	}
 	
+	/**
+	 * Simple class to return details about a server from its response to a "serverid" message.
+	 * @author billstclair
+	 */
+	public static class ServerDetails {
+		String id;
+		String pubkeystr;
+		String name;
+		public ServerDetails(String id, String pubkeystr, String name) {
+			this.id = id;
+			this.pubkeystr = pubkeystr;
+			this.name = name;
+		}
+	}
+	
+	/**
+	 * Query server at URL and return information about it
+	 * @param url the web address of the server
+	 * @param serverid the serverid, or null if not known
+	 * @return info about the server
+	 * @throws ClientException if the communication fails, the return message can't be parsed,
+	 *         the server returns a "failed" message, the server doesn't return a "register" message,
+	 *         the customer & serverid fields of the register message don't match,
+	 *         or the returned public key string doesn't hash to the server's ID
+	 */
+	public ServerDetails serveridForUrl(String url, String serverid) throws ClientException {
+		String msg = "(0," + T.SERVERID + ",0):0";
+		ServerProxy server = new ServerProxy(url);
+		String savedid = this.serverid;
+		Parser.Dict args;
+		try {
+			msg = server.process(msg);
+			this.serverid = serverid;
+			args = parser.matchMessage(msg);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		} finally {
+			this.serverid = savedid;
+			server.close();
+		}
+		String request = args.stringGet(T.REQUEST);
+		serverid = args.stringGet(T.CUSTOMER);
+		String pubkeystr = args.stringGet(T.PUBKEY);
+		String name = args.stringGet(T.NAME);
+		if (T.FAILED.equals(request)) {
+			String errmsg = args.stringGet(T.ERRMSG);
+			if (errmsg == null) errmsg = msg;
+			throw new ClientException("Failed to get ID from server: " + errmsg);
+		}
+		if (!T.REGISTER.equals(request) || !(serverid!=null && serverid.equals(args.stringGet(T.SERVERID)))) {
+			throw new ClientException("Server's register message malformed");
+		}
+		if (!serverid.equals(Crypto.getKeyID(pubkeystr))) {
+			throw new ClientException("Server's ID doesn't match its public key");
+		}
+		return new ServerDetails(serverid, pubkeystr, name);
+	}
+	
+	/**
+	 * Verify that a server matches its URL.
+     * Add the server to our database if it's not there already.
+   	 * Error if ID is non-null and doesn't match serverid at URL.
+   	 * Return serverid
+	 * @param url The web address of the server
+	 * @param id The server id or null
+	 * @return The server id
+	 * @throws ClientException if the URL is malformed or the server at URL
+	 *         doesn't exist or its id doesn't match the arg.
+	 */
+	public String verifyServer(String url, String id) throws ClientException {
+		if (!isUrl(url)) throw new ClientException("Not a URL: " + url);
+		if (Utility.isBlank(url)) url = null;
+		String urlhash = Crypto.sha1(url);
+		ClientDB.ServeridDB serveridDB = db.getServeridDB(); 
+		String serverid = serveridDB.get(urlhash);
+		if (serverid != null) {
+			if (id!=null && !id.equals(serverid)) throw new ClientException("verifyServer: id !> serverid");
+			return serverid;
+		}
+		ServerDetails details = this.serveridForUrl(url, id);
+		serverid = details.id;
+		if (id!=null && !id.equals(serverid)) throw new ClientException("Serverid not as expected");
+		if (this.getServerProp(T.URL, serverid) == null) {
+			// Initialize the server in the database
+			serveridDB.put(urlhash,  serverid);
+			ClientDB.ServerDB serverDB = db.getServerDB();
+			serverDB.put(serverid, T.URL, url);
+			serverDB.put(serverid, T.NAME, details.name);
+			db.getPubkeyDB().put(serverid, details.pubkeystr.trim() + "\n");
+		}
+		return serverid;
+	}
+
+	/**
+	 * Verify that a server matches its URL.
+     * Add the server to our database if it's not there already.
+	 * @param url The web address of the server
+	 * @return The server id
+	 * @throws ClientException if the URL is malformed or the server at URL
+	 *         doesn't exist.
+	 */
+	public String verifyServer(String url) throws ClientException {
+		return this.verifyServer(url, null);
+	}
+	
+	public void addServer(String url, String name) throws ClientException {
+		this.addServer(url, name, false);
+	}
+	
+	/**
+	 * Add a server with the given URL to the database.
+     * URL can be a coupon to redeem that with registration.
+     * No error, but does nothing, if the server is already there.
+     * If the server is NOT already there, registers with the given NAME and coupon.
+     * If registration fails, removes the server and you'll have to add it again
+     * after getting enough usage tokens at the server to register.
+     * Sets the client instance to use this server until addServer() or setServer()
+     * is called to change it.
+	 * @param url The server's web address
+	 * @param name The name to use for registration with the server
+	 * @param couponok true to skip verification of the coupon before registerting
+	 * @throws ClientException
+	 */
+	public void addServer(String url, String name, boolean couponok) throws ClientException {
+		String serverid;
+		String realurl;
+		String coupon = null;
+		this.requireCurrentUser();
+		if (isUrl(url)) {
+			realurl = url;
+			serverid = this.verifyServer(realurl);
+		} else {
+			String[] couponInfo = parseCoupon(url);
+			realurl = couponInfo[0];
+			coupon = couponInfo[1];
+			serverid = this.verifyServer(realurl);
+			if (!couponok) this.verifyCoupon(url, serverid, realurl);
+		}
+		boolean isAlreadyRegistered = true;
+		try {
+			this.setServer(serverid, false);
+		} catch (ClientException e) {
+			isAlreadyRegistered = false;
+		}
+		if (isAlreadyRegistered) {
+			if (coupon != null) this.redeem(coupon);
+		} else {
+			String oldserverid = this.serverid;
+			ServerProxy oldserver = this.server;
+			boolean ok = false;
+			this.serverid = serverid;
+			try {
+				url = this.getServerProp(T.URL, serverid);
+				if (url == null) throw new ClientException("URL not stored for verififed server: " + serverid);
+				this.server = new ServerProxy(url);
+				this.register(name, coupon, serverid);
+				this.forceinit();
+				ok = true;
+			} finally {
+				if (ok) oldserver.close();
+				else {
+					this.setUserReq(serverid, null);
+					this.serverid = oldserverid;
+					this.server.close();
+					this.server = oldserver;
+				}
+			}
+		}
+	}
+	
+	public void setServer(String serverid) throws ClientException {
+		this.setServer(serverid, true);
+	}
+	
+	public void setServer(String serverid, boolean check) throws ClientException {
+		// TO DO
+	}
+
 /*
-
-(defmethod verify-coupon ((client client) coupon serverid url)
-  "Verify that a message is a valid coupon.
-   Check that it is actually signed by the server that it
-   claims to be from.
-   Ask the server whether a coupon of that number exists."
-  (let ((parser (parser client))
-        (coupon-number (nth-value 1 (parse-coupon coupon))))
-    (verify-server client url serverid)
-    (let* ((msg (strcat "(0," $SERVERID ",0," coupon-number "):0"))
-           (server (make-server-proxy client url))
-           (msg (process server msg))
-           (reqs (parse parser msg)))
-      (match-serverreq client (car reqs) $REGISTER serverid)
-      (unless (eql 2 (length reqs))
-        (error "verifycoupon: expected 2 messages from server"))
-      (match-serverreq client (cadr reqs) $COUPONNUMBERHASH serverid))))
-
-;; Returns three values:
-;;   1) serverid
-;;   2) server pubkey
-;;   3) server name
-(defmethod serverid-for-url ((client client) url &optional serverid)
-  (let* ((parser (parser client))
-         (msg (strcat "(0," $SERVERID ",0):0"));
-         (server (make-server-proxy client url))
-         (msg (process server msg))
-         (save-serverid (prog1 (serverid client)
-                        (setf (serverid client) serverid)))
-         (args (unwind-protect (match-message parser msg)
-                 (setf (serverid client) save-serverid)))
-         (request (getarg $REQUEST args))
-         (serverid (getarg $CUSTOMER args))
-         (pubkey (getarg $PUBKEY args))
-         (name (getarg $NAME args)))
-    (when (equal $FAILED request)
-      (error "Failed to register at server: ~s"
-             (or (getarg $ERRMSG args) msg)))
-    (unless (and (equal $REGISTER request)
-                 (equal serverid (getarg $SERVERID args)))
-      (error "Server's register message malformed"))
-    (unless (equal (pubkey-id pubkey) serverid)
-      (error "verifyserver: Server's id doesn't match its public key"))
-    (values serverid pubkey name)))
-
-(defmethod verify-server ((client client) url &optional id)
-  "Verify that a server matches its URL.
-   Add the server to our database if it's not there already.
-   Error if ID is non-null and doesn't match serverid at URL.
-   Return serverid, or error."
-  (unless (url-p url)
-    (error "Not a URL: ~s" url))
-  (when (blankp id) (setq id nil))
-  (let* ((db (db client))
-         (urlhash (sha1 url))
-         (serverid (db-get db $SERVER $SERVERID urlhash)))
-    (cond (serverid
-           (when (and id (not (equal id serverid)))
-             (error "verifyserver: id <> serverid"))
-           (unless id (setq id serverid)))
-          (t
-           (multiple-value-bind (serverid pubkey name) (serverid-for-url client url)
-             (if (not id)
-                 (setq id serverid)
-                 (unless (equal serverid id)
-                   (error "Serverid different than expected")))
-             (unless (serverprop client $URL serverid)
-               ;; Initialize the server in the database
-               (setf (db-get db $SERVER $SERVERID urlhash) serverid
-                     (db-get db (serverkey client $URL serverid)) url
-                     (db-get db (serverkey client $NAME serverid)) name
-                     (db-get db (pubkeykey serverid))
-                     (format nil "~a~%" (trim pubkey))))
-             serverid)))))
-
-(defmethod addserver ((client client) url &optional name couponok)
-  "Add a server with the given URL to the database.
-   URL can be a coupon to redeem that with registration.
-   No error, but does nothing, if the server is already there.
-   If the server is NOT already there, registers with the given NAME and coupon.
-   If registration fails, removes the server and you'll have to add it again
-   after getting enough usage tokens at the server to register.
-   Sets the client instance to use this server until addserver() or setserver()
-   is called to change it.
-   If COUPONOK is true, does not verify a coupon with the server before using it."
-  (let ((db (db client))
-        (serverid nil)
-        (realurl nil)
-        (coupon nil))
-    (require-current-user client)
-    (cond ((url-p url)
-           (setq realurl url
-                 serverid (verify-server client url)))
-          (t (multiple-value-setq (realurl coupon) (parse-coupon url))
-             (setq serverid (verify-server client realurl))
-             (unless couponok
-               (verify-coupon client url serverid realurl))))
-    (let ((already-registered-p t))
-      (handler-case (setserver client serverid nil)
-        (error ()
-          (setq already-registered-p nil)))
-      (cond (already-registered-p
-             ;; User already has an account at this server.
-             ;; Redeem the coupon
-             (when coupon
-               (redeem client coupon)))
-            (t 
-             (let ((oldserverid (serverid client))
-                   (oldserver (server client))
-                   (ok nil))
-               (setf (serverid client) serverid
-                     url (serverprop client $URL serverid))
-               (unwind-protect
-                    (progn
-                      (unless url
-                        (error "URL not stored for verified server: ~s" serverid))
-                      (setf (server client) (make-server-proxy client url))
-                      (register client name coupon serverid)
-                      (forceinit client)
-                      (setq ok t))
-                 (unless ok
-                   (setf (db-get db (userreqkey client serverid)) nil
-                         (serverid client) oldserverid
-                         (server client) oldserver)))))))))
-
 (defmethod setserver ((client client) serverid &optional (check-p t))
   "Set the server to the given id.
    Sets the client instance to use this server until addserver() or setserver()
@@ -539,7 +621,13 @@ public class Client {
 ;;;  id, privkey, serverid, & server must all be set.
 ;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+*/
+	
+	public void register(String name, String coupon, String serverid) throws ClientException {
+		// TO DO
+	}
+	
+/*
 (defmethod register ((client client) &optional name coupons serverid)
   "Register at the current server.
    No error if already registered
@@ -2653,7 +2741,13 @@ public class Client {
      (sort res (lambda (x y) (< (bccomp x y) 0))
            :key #'outbox-time)
      msghash)))
-
+*/
+	
+	public void redeem(String coupon) throws ClientException {
+		// TO DO
+	}
+	
+/*
 (defmethod redeem ((client client) coupon)
   "Redeem a coupon
    If successful, add an inbox entry for the coupon spend and return false.
@@ -3273,6 +3367,14 @@ public class Client {
 		return getUserReq(serverid);
 	}
 	
+	public void setUserReq(String serverid, String req) {
+		db.getAccountDB().put(userServerKey(serverid), T.REQ, req);
+	}
+	
+	public void setUserReq(String req) {
+		this.setUserReq(serverid, req);
+	}
+	
 /*
 (defmethod usertimekey ((client client))
   (userserverkey client $TIME))
@@ -3544,7 +3646,13 @@ public class Client {
   "Synchronize with the server"
   (require-current-server client "Can't reinitialize balances")
   (forceinit client))
-
+*/
+	
+	public void forceinit() throws ClientException {
+		// TO DO
+	}
+	
+/*
 ;; Internal implementation of reinit-balances
 (defmethod forceinit ((client client))
   "Force a reinit of the client database for the current user"
