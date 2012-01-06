@@ -570,58 +570,101 @@ public class Client {
 		}
 	}
 	
+	/**
+	 * clear the serverid and server
+	 */
+	public void clearServer() {
+		ServerProxy server = this.server;
+		this.serverid = null;
+		this.server = null;
+		if (server != null) server.close();
+	}
+	
+	/**
+	 * Set the server to the given id.
+     * Sets the client instance to use this server until addserver() or setserver()
+     * is called to change it, by setting this.serverid and this.server"
+	 * Ensure that the server knows our ID and that its ID is serverid
+	 * @param serverid The ID of the server to set. The current user must have registered there before.
+	 * @throws ClientException If server unknown, not registered there before, server returns an error
+	 *         to the T.SERVERID message signed by the current user, or returned server ID not as expected.
+	 */
 	public void setServer(String serverid) throws ClientException {
 		this.setServer(serverid, true);
 	}
 	
+	/**
+	 * Set the server to the given id.
+     * Sets the client instance to use this server until addserver() or setserver()
+     * is called to change it, by setting this.serverid and this.server"
+	 * @param serverid The ID of the server to set. The current user must have registered there before.
+	 * @param check if true, ensure that the server knows our ID and that its ID is serverid
+	 * @throws ClientException If server unknown, not registered there before, server returns an error
+	 *         to the T.SERVERID message signed by the current user, or returned server ID not as expected.
+	 */
 	public void setServer(String serverid, boolean check) throws ClientException {
-		// TO DO
+		String url = this.getServerProp(T.URL, serverid);
+		if (url == null) throw new ClientException("Server not known: " + serverid);
+		this.requireCurrentUser();
+		if (this.userServerProp(T.REQ) == null) {
+			throw new ClientException("User not registered at server");
+		}
+		this.clearServer();
+		this.serverid = serverid;
+		this.server = new ServerProxy(url);
+		String msg;
+		Parser.Dict args;
+		if (check) {
+			try {
+				msg = this.sendmsg(new String[] {T.SERVERID, this.pubkeystr});
+				args = parser.matchMessage(msg);
+			} catch (Exception e) {
+				this.clearServer();
+				throw new ClientException("Server's serverid response error", e);
+			}
+			if (serverid != args.stringGet(T.CUSTOMER)) {
+				this.clearServer();
+				throw new ClientException("Serverid changed since we last contacted this server, old: " +
+				  serverid + ", new: " + args.stringGet(T.CUSTOMER));
+			}
+			if (!T.REGISTER.equals(args.get(T.REQUEST)) || !serverid.equals(args.get(T.SERVERID))) {
+				this.clearServer();
+				throw new ClientException("Server's serverid response wrong: " + msg);
+			}
+
+		}
+	}
+	
+	/**
+	 * Get the current server 
+	 * @return The server ID, if the user is logged in and there is a server;
+	 */
+	public String currentServer() {
+		return (this.currentUser()!=null && this.server!=null) ? this.serverid : null;
+	}
+	
+	/**
+	 * Error if this.currentServer() is null
+	 * @throws ClientException
+	 */
+	public void requireCurrentServer() throws ClientException {
+		this.requireCurrentServer(null);
+	}
+	
+	/**
+	 * Error with the given message if this.currentServer() is null;
+	 * @param msg
+	 * @throws ClientException
+	 */
+	public void requireCurrentServer(String msg) throws ClientException {
+		if (this.currentServer() == null) {
+			throw new ClientException(msg==null ? "Server not set" : msg);
+		}
 	}
 
-/*
-(defmethod setserver ((client client) serverid &optional (check-p t))
-  "Set the server to the given id.
-   Sets the client instance to use this server until addserver() or setserver()
-   is called to change it, by setting $this->serverid and $this->server"
-  (let ((url (or (serverprop client $URL serverid)
-                 (error "Server not known: ~s" serverid))))
-    (require-current-user client)
-    (unless (userserverprop client $REQ serverid)
-      (error "User not registered at server"))
-    (setf (serverid client) serverid
-          (server client) (make-server-proxy client url))
-
-    (when check-p
-      (let* ((msg (sendmsg client $SERVERID (pubkey client)))
-             (args (handler-case (match-message (parser client) msg)
-                     (error (c)
-                       (setf (serverid client) nil)
-                       (error "setserver: Server's serverid response error: ~a" c)))))
-        (unless (equal serverid (getarg $CUSTOMER args))
-          (setf (serverid client) nil)
-          (error "Serverid changed since we last contacted this server, old: ~s, new: ~s"
-                 serverid (getarg $CUSTOMER args)))
-        (unless (and (equal (getarg $REQUEST args) $REGISTER)
-                     (equal (getarg $SERVERID args) serverid))
-          (setf (serverid client) nil)
-          (error "Server's serverid message wrong: ~s" msg))))))
-
-(defmethod current-server ((client client))
-  "Return current server if the user is logged in and the server is set, else false."
-  (and (current-user client) (server client) (serverid client)))
-
-(defmethod require-current-server ((client client) &optional msg)
-  (unless (current-server client)
-    (error (or msg "Server not set"))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;
-;;;  All the API methods below require the user to be logged and the server to be set.
-;;;  Do this by calling newuser() or login(), and addserver() or setserver().
-;;;  id, privkey, serverid, & server must all be set.
-;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-*/
+//  All the API methods below require the user to be logged in and the server to be set.
+//  Do this by calling newuser() or login(), and addserver() or setserver().
+//  id, privkey, serverid, & server must all be set.
 	
 	public void register(String name, String coupon, String serverid) throws ClientException {
 		// TO DO
@@ -3188,46 +3231,94 @@ public class Client {
   (fee-assetid (getfees client)))
 */
 	
+	/**
+	 * Return the hash of passphrase
+	 * @param passphrase
+	 * @return sha1(passphrase)
+	 */
 	public String passphraseHash(String passphrase) {
 		return Crypto.sha1(passphrase);
 	}
-
-/*
-(defmethod custmsg ((client client) &rest args)
-  "Create a signed customer message.
-   Takes an arbitrary number of args."
-  (let* ((id (id client))
-         (parser (parser client))
-         (privkey (privkey client))
-         (args (cons id args))
-         (msg (apply #'makemsg parser args))
-         (sig (sign msg privkey)))
-    (trim (format nil "~a:~%~a~%" msg sig))))
-
-(defmethod sendmsg ((client client) &rest args)
-  "Send a customer message to the server.
-   Takes an arbitrary number of args."
-  (let ((server (server client))
-        (msg (apply #'custmsg client args)))
-    (process server msg)))
-
-(defmethod unpack-servermsg ((client client) msg &optional request serverid)
-  "Unpack a server message.
-   Return a string if parse error or fail from server.
-   This is called via the $unpacker arg to utility->dirhash & balancehash."
-  (let* ((parser (parser client))
-         (reqs (parse parser msg))
-         (req (car reqs))
-         (args (match-serverreq client req request serverid)))
-    (setf (getarg $UNPACK-REQS-KEY args) reqs) ;; save parse results
-    args))
-*/
 	
+	/**
+	 * Turn an array of strings into a signed message
+	 * @param args array of strings, not including the customer id
+	 * @return (<id>,args...):signature
+	 * @throws ClientException If the message doesn't match a known pattern
+	 */
+	public String custmsg(String[] args) throws ClientException {
+		int len = args.length;
+		String[] args2 = new String[len+1];
+		args2[0] = this.id;
+		for (int i=0; i<len; i++) args2[i+1] = args[i];
+		String msg;
+		try {
+			msg = parser.makemsg(args);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		String sig = Crypto.sign(msg, this.privkey);
+		return msg + ':' + sig;
+	}
+	
+	/**
+	 * Create a message from args, send it to the server, and return the response
+	 * @param args Message elements not including initial customer id
+	 * @return Servers response message
+	 * @throws ClientException If the args don't match a known pattern or there's an error communicating with the server. 
+	 */
+	public String sendmsg(String[] args) throws ClientException {
+		String msg = this.custmsg(args);
+		return server.process(msg);
+	}
+	
+	/**
+	 * Parse a server message and match its first element.
+	 * @param msg The server message to parse
+	 * @return A matched table, with the unmatched Parser.DictList as the T.UNPACK_REQS_KEY element.
+	 * @throws ClientException If the parse or the match fails
+	 */
+	public Parser.Dict unpackServermsg(String msg) throws ClientException {
+		return this.unpackServermsg(msg, null, null);
+	}
+	
+	/**
+	 * Parse a server message and match its first element.
+	 * @param msg The server message to parse
+	 * @param request The expected T.REQUEST element, or null to not check
+	 * @return A matched table, with the unmatched Parser.DictList as the T.UNPACK_REQS_KEY element.
+	 * @throws ClientException If the parse or the match or the comparison with request fails
+	 */
+	public Parser.Dict unpackServermsg(String msg, String request) throws ClientException {
+		return this.unpackServermsg(msg, request, null);
+	}
+	
+	/**
+	 * Parse a server message and match its first element.
+	 * @param msg The server message to parse
+	 * @param request The expected T.REQUEST element, or null to not check
+	 * @param serverid The expected serverid, or null to not check
+	 * @return A matched table, with the unmatched Parser.DictList as the T.UNPACK_REQS_KEY element.
+	 * @throws ClientException If the parse or the match or the comparison with request or serverid fails
+	 */
+	public Parser.Dict unpackServermsg(String msg, String request, String serverid) throws ClientException {
+		Parser.DictList reqs;
+		try {
+			reqs = parser.parse(msg);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		Parser.Dict req = reqs.get(0);
+		Parser.Dict args = this.matchServerReq(req,  request, serverid);
+		args.put(T.UNPACK_REQS_KEY, reqs);
+		return args;
+	}
+
 	/**
 	 * Unpack a server message that has already been parsed.
 	 * @param req The parsed server message
 	 * @param request if non-NULL, must match the T.REQUEST in message
-	 * @param serverid The serverid expected in the server message
+	 * @param serverid The serverid expected in the server message. Not checked if NULL.
 	 * @return The matched args
 	 * @throws ClientException
 	 */
@@ -3248,7 +3339,7 @@ public class Client {
 			Parser.Dict msgargs = (msg != null) ? parser.matchPattern(msg) : null;
 			if (msgargs != null) {
 				String msgargsServerid = msgargs.stringGet(T.SERVERID);
-				if (msgargsServerid!=null && msgargsServerid!=serverid) {
+				if (msgargsServerid!=null && serverid!=null && msgargsServerid!=serverid) {
 					throw new ClientException("While matching server-wrapped msg: serverid mismatch");
 				}
 				args.put(T.MSG, msgargs);

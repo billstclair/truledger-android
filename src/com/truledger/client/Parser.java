@@ -139,6 +139,12 @@ public class Parser {
 	
 	public static class Dict extends Hashtable<Object, Object> {
 		private static final long serialVersionUID = -8236347145013574201L;
+		public Dict () {
+			super();
+		}
+		public Dict (int size) {
+			super(size);
+		}
 		public Object get(int key) {
 			return this.get(intern(key));
 		}
@@ -688,6 +694,57 @@ public class Parser {
 		{T.ATBACKUP, T.REQ},
 		{T.ATCOMMIT, T.MSG}
 		};
+	
+	/**
+	 * Escape a string for inclusion in a message
+	 * @param str String to escape
+	 * @return str with "(),:.\\" escaped with '\\'
+	 */
+	public static String escape(String str) {
+		StringBuilder buf = null;
+		int len = str.length();
+		for (int i=0; i<len; i++) {
+			char chr = str.charAt(i);
+			if ("(),:.\\".indexOf(chr) >= 0) {
+				if (buf == null) {
+					buf = new StringBuilder(len+5);
+					buf.append(str.substring(0, i));
+				}
+				buf.append('\\');
+			}
+			if (buf != null) buf.append(chr);
+		}
+		return (buf == null) ? str : buf.toString();
+	}
+
+	/**
+	 * Make a message string from an array of strings
+	 * @param req The strings
+	 * @return A message string. Escapes all elements except the T.MSG element, which is assumed to already be escaped.
+	 * @throws ParseException If there's a null element, or the message doesn't match any of the known patterns.
+	 */
+	public String makemsg(String[] req) throws ParseException {
+		int len = req.length;
+		Dict args = new Dict(len);
+		int size = 1;
+		for (int i=0; i<len; i++) {
+			String elt = req[i];
+			if (elt == null) throw new ParseException("Null value in makemsg args");
+			args.put(i,  elt);
+			size += elt.length()+1;
+		}
+		args = this.matchPattern(args);
+		StringBuilder buf = new StringBuilder(size);
+		buf.append('(');
+		String msgval = args.stringGet(T.MSG);
+		for (int i=0; i<len; i++) {
+			if (i > 0) buf.append(',');
+			String elt = req[i];
+			buf.append(elt==msgval ? elt : escape(elt));
+		}
+		buf.append(')');
+		return buf.toString();
+	}
 	 
 }
 
