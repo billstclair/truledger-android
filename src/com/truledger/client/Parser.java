@@ -729,7 +729,15 @@ public class Parser {
 		int size = 1;
 		for (int i=0; i<len; i++) {
 			String elt = req[i];
-			if (elt == null) throw new ParseException("Null value in makemsg args");
+			if (elt == null) {
+				for (int j=i+1; j<len; j++) {
+					if (req[j] != null) {
+						throw new ParseException("Null value in makemsg args followed by non-null");
+					}
+				}
+				len = i;
+				break;
+			}
 			args.put(i,  elt);
 			size += elt.length()+1;
 		}

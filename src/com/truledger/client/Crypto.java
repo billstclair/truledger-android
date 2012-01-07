@@ -210,6 +210,10 @@ public class Crypto {
 		return Cipher.getInstance("RSA/None/PKCS1Padding");
 	}
 
+	public static String RSAPubkeyEncrypt(String plainText, String keytext) throws IOException {
+		return RSAPubkeyEncrypt(plainText, decodeRSAPublicKey(keytext));
+	}
+	
 	public static String RSAPubkeyEncrypt(String plainText, PublicKey key) {
 		initialize();
 		try {

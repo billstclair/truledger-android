@@ -7,6 +7,7 @@ import java.io.InputStreamReader;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.security.KeyPair;
+import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -555,7 +556,7 @@ public class Client {
 				url = this.getServerProp(T.URL, serverid);
 				if (url == null) throw new ClientException("URL not stored for verififed server: " + serverid);
 				this.server = new ServerProxy(url);
-				this.register(name, coupon, serverid);
+				this.register(name, coupon);
 				this.forceinit();
 				ok = true;
 			} finally {
@@ -666,67 +667,62 @@ public class Client {
 //  Do this by calling newuser() or login(), and addserver() or setserver().
 //  id, privkey, serverid, & server must all be set.
 	
-	public void register(String name, String coupon, String serverid) throws ClientException {
-		// TO DO
+	/**
+	 * Register at the current server.
+	 * No error if already registered
+	 * If not registered, and COUPON is  non-null, encrypts and signs it,
+	   and sends it to the server with the registration request."
+	 * @param name The name to register with. null for none.
+	 * @param coupon A coupon to register with or null.
+	 * @throws ClientException
+	 */
+	public void register(String name, String coupon) throws ClientException {
+		String id = this.requireCurrentUser();
+		this.requireCurrentServer("In register: Server not set");
+
+		// If already registered, and we know it, nothing to do
+		ClientDB.AccountDB accountDB = db.getAccountDB();
+		String pubkeysigPath = this.userServerKey(T.PUBKEYSIG);
+		if (accountDB.get(pubkeysigPath, id) != null) return;
+		
+		// See if server already knows us.
+		// Resist the urge to change this to a call to getPubkeyFromServer(). Trust me.
+		String msg = this.sendmsg(new String[] {T.ID, serverid, id});
+		Parser.Dict args;
+		try {
+			args = this.unpackServermsg(msg, T.REGISTER);
+		} catch (ClientException e) {
+			// Server doesn't know us. Register with server.
+			msg = this.custmsg(new String[] {T.REGISTER, serverid, pubkeystr, name});
+			if (coupon != null) {
+				String serverkey = db.getPubkeyDB().get(serverid);
+				if (serverkey == null) throw new ClientException("Can't get server public key");
+				try {
+					String couponCrypt = Crypto.RSAPubkeyEncrypt(coupon,  serverkey);
+					msg += '.' + this.custmsg(new String[] {T.COUPONENVELOPE, serverid, couponCrypt});
+				} catch (IOException e2) {
+					throw new ClientException(e2);
+				}
+			}
+			msg = server.process(msg);
+			args = this.unpackServermsg(msg, T.ATREGISTER);
+		}
+		
+		// Registration succeeded. Record in database.
+		args = (Parser.Dict)args.get(T.MSG);
+		if (args==null ||
+		    !id.equals(args.get(T.CUSTOMER)) ||
+		    !T.REGISTER.equals(args.get(T.REQUEST)) ||
+		    !serverid.equals(args.get(T.SERVERID))) {
+		    	throw new ClientException("Malformed registration message");
+		    }
+		String keyid = Crypto.getKeyID(args.stringGet(T.PUBKEY));
+		if (!id.equals(keyid)) throw new ClientException("Server's pubkey wrong");
+		accountDB.put(pubkeysigPath, id, msg);
+		accountDB.put(this.userServerKey(), T.REQ, "-1");
 	}
 	
 /*
-(defmethod register ((client client) &optional name coupons serverid)
-  "Register at the current server.
-   No error if already registered
-   If not registered, and COUPONS is a string or array of strings,
-   assumes the string(s) are coupons, encrypts and signs them,
-   and sends them to the server with the registration request."
-  (let ((db (db client))
-        (id (require-current-user client))
-        server)
-    (cond ((null serverid)
-           (setq serverid (serverid client)
-                 server (server client)))
-          (t 
-           (let ((url (or (serverprop client $URL)
-                          (error "In register: Unknown serverid"))))
-             (setq server (make-server-proxy client url)))))
-
-    (require-current-server client "In register(): Server not set")
-
-    ;; If already registered and we know it, nothing to do
-    (when (db-get db (userserverkey client $PUBKEYSIG serverid) id)
-      (return-from register))
-
-    ;; See if server already knows us
-    ;; Resist the urge to change this to a call to
-    ;; get-pubkey-from-server. Trust me.
-    (let* ((msg (process server (custmsg client $ID serverid id)))
-           args)
-      (handler-case
-          (setq args (unpack-servermsg client msg $ATREGISTER))
-        (error ()
-          ;; Server doesn't know us. Register with server.
-          (setq msg (apply #'custmsg client $REGISTER serverid (pubkey client)
-                           (and name (list name))))
-          (when coupons
-            (when (stringp coupons) (setq coupons (list coupons)))
-            (let ((pubkey (db-get (pubkeydb client) serverid)))
-              (unless pubkey (error "Can't get server public key"))
-              (dolist (coupon coupons)
-                (dotcat msg "." (custmsg client $COUPONENVELOPE serverid
-                                         (pubkey-encrypt coupon pubkey))))))
-          (setq msg (process server msg)
-                args (unpack-servermsg client msg $ATREGISTER))))
-
-      ;; Didn't fail. Notice registration here
-      (setq args (getarg $MSG args))
-      (unless (and (equal (getarg $CUSTOMER args) id)
-                   (equal (getarg $REQUEST args) $REGISTER)
-                   (equal (getarg $SERVERID args) serverid))
-        (error "Malformed registration message"))
-      (let* ((pubkey (getarg $PUBKEY args))
-             (keyid (pubkey-id pubkey)))
-        (unless (equal keyid id)
-          (error "Server's pubkey wrong"))
-        (setf (db-get db (userserverkey client $PUBKEYSIG) id) msg
-              (db-get db (userserverkey client $REQ)) "-1")))))
 
 (defconstant $PRIVKEY-CACHE-SALT "privkey-cache-salt")
 
@@ -3426,16 +3422,20 @@ public class Client {
     res))
 */
 	
-	public String userServerKey(String serverid) {
-		return id + '/' + T.SERVER + '/' + serverid;
+	public String userServerKey(String prop, String serverid) {
+		return id + '/' + T.SERVER + '/' + serverid + (prop==null ? "" : '/' + prop);
+	}
+	
+	public String userServerKey(String prop) {
+		return userServerKey(prop, serverid);
 	}
 
 	public String userServerKey() {
-		return userServerKey(serverid);
+		return userServerKey(null, serverid);
 	}
 
 	public String userServerProp(String prop, String serverid) {
-		return db.getAccountDB().get(userServerKey(serverid), prop);
+		return db.getAccountDB().get(userServerKey(null, serverid), prop);
 	}
 
 	public String userServerProp(String prop) {
@@ -3443,15 +3443,15 @@ public class Client {
 	}
 
 	public void setUserServerProp(String prop, String serverid, String value) {
-		db.getAccountDB().put(userServerKey(serverid), prop, value);
+		db.getAccountDB().put(userServerKey(null, serverid), prop, value);
 	}
 	
 	public void setUserServerProp(String prop, String value) {
-		this.setUserServerProp(prop,  serverid, value);
+		this.setUserServerProp(prop, serverid, value);
 	}
 		
 	public String getUserReq(String serverid) {
-		return db.getAccountDB().get(userServerKey(serverid), T.REQ);
+		return db.getAccountDB().get(userServerKey(null, serverid), T.REQ);
 	}
 	
 	public String getUserReq() {
@@ -3459,7 +3459,7 @@ public class Client {
 	}
 	
 	public void setUserReq(String serverid, String req) {
-		db.getAccountDB().put(userServerKey(serverid), T.REQ, req);
+		db.getAccountDB().put(userServerKey(null, serverid), T.REQ, req);
 	}
 	
 	public void setUserReq(String req) {
