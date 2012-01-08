@@ -144,7 +144,7 @@ public class ClientDB {
 	public void close() {
 		if (mPrivkeyDB != null) {
 			mPrivkeyDB.close();
-			mPrivkeyDB.close();
+			mPrivkeyDB = null;
 		}
 		if (mPubkeyDB != null) {
 			mPubkeyDB.close();

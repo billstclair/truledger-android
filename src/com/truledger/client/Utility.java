@@ -122,6 +122,35 @@ public class Utility {
 	  }
 	  return true;	  
   }
+  
+  public static String xorSalt(String string, String salt) {
+	  if (isBlank(salt)) return string;
+	  int strlen = string.length();
+	  int saltlen = salt.length();
+	  char[] buf = new char[strlen];
+	  int idx = 0;
+	  for (int i=0; i<strlen; i++) {
+		  buf[i] = salt.charAt(idx);
+		  if (++idx >= saltlen) idx = 0;
+	  }
+	  return xorStrings(string, salt);
+  }
+  
+  public static String xorStrings(String s1, String s2) {
+	  int s1len = s1.length();
+	  int s2len = s2.length();
+	  int maxlen = Math.max(s1len, s2len);
+	  char[] buf = new char[maxlen];
+	  int minlen = Math.min(s1len,  s2len);
+	  for (int i=0; i<minlen; i++) {
+		  buf[i] = (char)((int)s1.charAt(i) ^ (int)s2.charAt(i));
+	  }
+	  String tail = (s1len >= s2len) ? s1 : s2;
+	  for (int i=minlen; i<maxlen; i++) {
+		  buf[i] = tail.charAt(i);
+	  }
+	  return tail.toString();
+  }	
 }
 
 //////////////////////////////////////////////////////////////////////

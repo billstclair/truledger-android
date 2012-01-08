@@ -7,7 +7,6 @@ import java.io.InputStreamReader;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.security.KeyPair;
-import java.security.PublicKey;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -648,8 +647,8 @@ public class Client {
 	 * Error if this.currentServer() is null
 	 * @throws ClientException
 	 */
-	public void requireCurrentServer() throws ClientException {
-		this.requireCurrentServer(null);
+	public String requireCurrentServer() throws ClientException {
+		return this.requireCurrentServer(null);
 	}
 	
 	/**
@@ -657,10 +656,12 @@ public class Client {
 	 * @param msg
 	 * @throws ClientException
 	 */
-	public void requireCurrentServer(String msg) throws ClientException {
-		if (this.currentServer() == null) {
+	public String requireCurrentServer(String msg) throws ClientException {
+		String res = this.currentServer();
+		if (res == null){
 			throw new ClientException(msg==null ? "Server not set" : msg);
 		}
+		return res;
 	}
 
 //  All the API methods below require the user to be logged in and the server to be set.
@@ -722,64 +723,71 @@ public class Client {
 		accountDB.put(this.userServerKey(), T.REQ, "-1");
 	}
 	
+	private static String $PRIVKEY_CACHE_SALT = "privkey-cache-salt";
+	
+	public boolean isPrivkeyCached(String serverid) throws ClientException {
+		if (serverid == null) {
+			serverid = this.requireCurrentServer();
+		}
+		return this.userServerProp(T.PRIVKEYCACHEDP, serverid) == "cached";
+	}
+	
+	public boolean isPrivkeyCached() throws ClientException {
+		return this.isPrivkeyCached(null);
+	}
+	
+	public void setPrivkeyCached(boolean value, String serverid) throws ClientException {
+		if (serverid == null) {
+			serverid = this.requireCurrentServer();
+		}
+		this.setUserServerProp(T.PRIVKEYCACHEDP, value ? "cached" : null);
+	}
+
+	public boolean needPrivkeyCache(String serverid) throws ClientException {
+		if (serverid == null) {
+			serverid = this.requireCurrentServer();
+		}
+		return this.userServerProp(T.NEEDPRIVKEYCACHE, serverid) == T.NEEDPRIVKEYCACHE;
+	}
+	
+	public boolean needPrivkeyCached() throws ClientException {
+		return this.needPrivkeyCache(null);
+	}
+	
+	public void setNeedPrivkeyCached(boolean value, String serverid) throws ClientException {
+		if (serverid == null) {
+			serverid = this.requireCurrentServer();
+		}
+		this.setUserServerProp(T.NEEDPRIVKEYCACHE, value ? T.NEEDPRIVKEYCACHE : null);
+	}
+	
+	/**
+	 * Cache or uncache the user's private key on the server.
+	 * We could encrypt the private key again, so it doesn't look like a
+	 * private key, but that's really not any more secure, since it will
+ 	 * only use the passphrase a second time. We could require yet
+ 	 * another passphrase, but users will forget that, since they'll
+ 	 * hardly ever use it.
+	 * @param sessionid The ID of the current session
+	 * @param uncache True to uncache, false to cache
+	 * @throws ClientException
+	 */
+	public void cachePrivkey(String sessionid, boolean uncache) throws ClientException {
+		String serverid = this.requireCurrentServer();
+		if (!uncache && id == serverid) throw new ClientException("You may not cache the server private key");
+		String passphrase = this.sessionPassphrase(sessionid);
+		String data = uncache ? "" : db.getPrivkeyDB().get(passphraseHash(passphrase));
+		String key = passphraseHash(passphrase, $PRIVKEY_CACHE_SALT);
+		this.writeData(key, data, true);
+		this.setPrivkeyCached(!uncache, serverid);
+	}
+	
+	public String fetchPrivkey(String serverurl, String passphrase) throws ClientException {
+		String key = passphraseHash(passphrase, $PRIVKEY_CACHE_SALT);
+		return this.readData(key, true, serverurl)[0];
+	}
+
 /*
-
-(defconstant $PRIVKEY-CACHE-SALT "privkey-cache-salt")
-
-(defmethod privkey-cached-p ((client client) &optional serverid)
-  (unless serverid
-    (require-current-server client "In privkey-cached-p: no current server")
-    (setq serverid (serverid client)))
-  (equal "cached" (userserverprop client $PRIVKEYCACHEDP serverid)))
-
-(defmethod (setf privkey-cached-p) (value (client client) &optional serverid)
-  (unless serverid
-    (require-current-server client "In (setf privkey-cached-p): no current server")
-    (setf serverid (serverid client)))
-  (setf (userserverprop client $PRIVKEYCACHEDP serverid) (and value "cached"))
-  value)
-
-(defmethod need-privkey-cache-p ((client client) &optional serverid)
-  (unless serverid
-    (require-current-server client "In privkey-cached-p: no current server")
-    (setq serverid (serverid client)))
-  (equal $NEEDPRIVKEYCACHE (userserverprop client $NEEDPRIVKEYCACHE serverid)))
-
-(defmethod (setf need-privkey-cache-p) (value (client client) &optional serverid)
-  (unless serverid
-    (require-current-server client "In privkey-cached-p: no current server")
-    (setq serverid (serverid client)))
-  (setf (userserverprop client $NEEDPRIVKEYCACHE serverid)
-        (and value $NEEDPRIVKEYCACHE))
-  value)
-
-;; We could encrypt the private key again, so it doesn't look like a
-;; private key, but that's really not any more secure, since it will
-;; only use the passphrase a second time. We could require yet
-;; another passphrase, but users will forget that, since they'll
-;; hardly ever use it.
-(defmethod cache-privkey ((client client) sessionid &optional uncache-p)
-  (require-current-server client "In cache-privkey: no current server")
-  (when (and (not uncache-p)
-             (equal (id client) (serverid client)))
-    (error "You may not cache the server private key."))
-  (flet ((doit (passphrase)
-           (let* ((db (db client))
-                  (data (if uncache-p
-                            ""
-                            (db-get db $PRIVKEY (passphrase-hash passphrase))))
-                  (key (passphrase-hash passphrase $PRIVKEY-CACHE-SALT)))
-             (writedata client key data t)
-             (setf (privkey-cached-p client) (not uncache-p))
-             nil)))
-    (let ((passphrase (session-passphrase client sessionid)))
-      (unwind-protect (doit passphrase)
-        (destroy-password passphrase)))))
-
-(defmethod fetch-privkey ((client client) serverurl passphrase)
-  (let ((key (passphrase-hash passphrase $PRIVKEY-CACHE-SALT)))
-    (readdata client key :anonymous-p t :serverurl serverurl)))
-
 (defstruct contact
   id
   name
@@ -2835,27 +2843,61 @@ public class Client {
         (let ((args (unpack-servermsg client msg $VERSION)))
           (when forceserver (setf (db-get db key) msg))
           (values (getarg $VERSION args) (getarg $TIME args)))))))
-
-(defmethod readdata ((client client) key &key
-                     anonymous-p size-p serverurl)
-  (unless anonymous-p
-    (require-current-server client "In readdata(): Server not set"))
-  (let* ((serverid (or (and anonymous-p
-                          serverurl
-                          (verify-server client serverurl))
-                     (serverid client)
-                     (error "Can't determine serverid")))
-         (size-arg (and size-p (list "Y")))
-         (msg (if anonymous-p
-                  (strcat
-                   (apply #'makemsg (parser client)
-                          "0" $READDATA serverid "0" key size-arg)
-                   ":0")
-                 (apply #'custmsg client
-                        $READDATA serverid (getreq client) key size-arg)))
-         (server (if (and anonymous-p serverurl)
-                     (make-server-proxy client serverurl)
-                     (server client)))
+*/
+	
+	/**
+	 * Read some data from the server
+	 * @param key The key for the data
+	 * @param anonymously True if the read request is to be anonymous
+	 * @param serverurl The URL of the server. Use the current server if null;
+	 * @param sizeOnly True to return the size of the data instead of the data itself
+	 * @return A 2-element String arrary: [<data>, <time>]
+	 * @throws ClientException
+	 */
+	public String[] readData(String key, boolean anonymously, String serverurl, boolean sizeOnly) throws ClientException {
+		String serverid;
+		if (anonymously) {
+			serverid = (serverurl != null) ? this.verifyServer(serverurl) : this.serverid;
+			if (serverid == null) throw new ClientException("Can't determine serverid");
+		} else {
+			serverid = this.requireCurrentServer();
+		}
+		String sizearg = sizeOnly ? "Y": null;
+		String msg;
+		try {
+			msg = anonymously ? parser.makemsg(new String[]{"0", T.READDATA, serverid, "0", key, sizearg}) + ":0" :
+			                    this.custmsg(new String[]{T.READDATA, serverid, this.getreq(), key, sizearg});
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		ServerProxy server = (anonymously && serverurl!=null) ? new ServerProxy(serverurl) : this.server;
+		String saveServerid = this.serverid;
+		String servermsg;
+		Parser.Dict args;
+		try {
+			servermsg = server.process(msg);
+			args = this.unpackServermsg(servermsg);
+		} finally {
+			this.serverid = saveServerid;
+			if (anonymously && serverurl!=null) server.close();
+		}
+		String request = args.stringGet(T.REQUEST);
+		String reqid = args.stringGet(T.ID);
+		String time = args.stringGet(T.TIME);
+		String data = args.stringGet(T.DATA);
+		if (!T.ATREADDATA.equals(request)) {
+			throw new ClientException("Unknown response type: " + request + ", expected: " + T.ATREADDATA);
+		}
+		String wantid = (anonymously ? "0" : id); 
+		if (!wantid.equals(reqid)) throw new ClientException("Wrong id returned from readdata");
+		return new String[] {data, time};
+	}
+	
+	public String[] readData(String key, boolean anonymously, String serverurl) throws ClientException {
+		return this.readData(key, anonymously, serverurl, false);
+	}
+	
+/*
          (save-serverid (prog1 (serverid client)
                         (setf (serverid client) serverid)))
          (servermsg (process server msg))
@@ -2870,14 +2912,26 @@ public class Client {
     (unless (equal (if anonymous-p "0" (id client)) reqid)
       (error "Wrong id returned from readdata"))
     (values data time)))
-
-(defmethod writedata ((client client) key data &optional anonymous-p)
-  (require-current-server client "In writedata(): Server not set")
-  (handler-case (writedata-internal client key data anonymous-p)
-    (error ()
-      (forceinit client)
-      (writedata-internal client key data anonymous-p))))
-
+*/
+	
+	public void writeData(String key, String data, boolean anonymously) throws ClientException {
+		try {
+			this.writeDataInternal(key, data, anonymously);
+		} catch (ClientException e) {
+			this.forceinit();
+			this.writeDataInternal(key, data, anonymously);
+		}
+	}
+	
+	public void writeData(String key, String data) throws ClientException {
+		this.writeData(key, data, false);
+	}
+	
+	private void writeDataInternal(String key, String data, boolean anonymously) throws ClientException {
+		// TO DO
+	}
+	
+/*
 (defmethod writedata-internal ((client client) key data anonymous-p)
   (let ((db (db client)))
     (with-db-lock (db (userreqkey client))
@@ -3232,8 +3286,15 @@ public class Client {
 	 * @param passphrase
 	 * @return sha1(passphrase)
 	 */
-	public String passphraseHash(String passphrase) {
+	public static String passphraseHash(String passphrase) {
 		return Crypto.sha1(passphrase);
+	}
+	
+	/**
+	 * Return the hash of passphrase xor'd with the salt
+	 */
+	public static String passphraseHash(String passphrase, String salt) {
+		return Utility.xorSalt(passphrase, salt);
 	}
 	
 	/**
@@ -3660,7 +3721,18 @@ public class Client {
     (when pubkey
       (db-put db pubkeykey pubkey)
       pubkey)))
-
+*/
+	
+	public String getreq(boolean reinit) {
+		// TO DO
+		return "foo";
+	}
+	
+	public String getreq() {
+		return this.getreq(false);
+	}
+	
+/*
 (defmethod getreq ((client client) &optional reinit-p)
   "Get a new request"
   (let ((db (db client))
