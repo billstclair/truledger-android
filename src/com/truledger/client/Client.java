@@ -782,85 +782,77 @@ public class Client {
 		this.setPrivkeyCached(!uncache, serverid);
 	}
 	
+	/**
+	 * Get a saved private key from a server
+	 * @param serverurl The web address of the server
+	 * @param passphrase The passphrase of the private key
+	 * @return The encrypted password string
+	 * @throws ClientException
+	 */
 	public String fetchPrivkey(String serverurl, String passphrase) throws ClientException {
 		String key = passphraseHash(passphrase, $PRIVKEY_CACHE_SALT);
 		return this.readData(key, true, serverurl)[0];
 	}
 
+	public static class Contact {
+		public String id;
+		public String name;
+		public String nickname;
+		public String note;
+		public String[] servers;
+		public Client client;
+	
+		public Contact(String id, String name, String nickname, String note, String[] servers, Client client) {
+			this.id = id;
+			this.name = name;
+			this.nickname = nickname;
+			this.note = note;
+			this.servers = servers;
+			this.client = client;
+		}
+		
+		/**
+		 * @return true if this contact is known at the current logged in server
+		 */
+		public boolean isClientContact() {
+			if (client == null) return false;
+			String serverid = client.serverid;
+			if (serverid == null) return false;
+			for (String sid: servers) {
+				if (serverid.equals(sid)) return true;
+			}
+			return false;
+		}
+		
+		/**
+		 * @param c2 Contact with which to compare
+		 * @return -1, 0, or 1 according to whether c2 is <, ==, or > this.
+		 *         Comparison is by nickname, name, then id
+		 */
+		public int compareTo(Contact c2) {
+			int res = compareStrings(nickname, c2.nickname);
+			if (res != 0) return res;
+			res = compareStrings(name, c2.name);
+			if (res != 0) return res;
+			return compareStrings(id, c2.id);
+		}
+	}
+
+	/**
+	 * Compare two, possibly null strings.
+	 * null is considered less than non-null
+	 * @param s1
+	 * @param s2
+	 * @return -1, 0, 1 according to s1 < s2, s1 == s2, s1 > s2
+	 */
+	public static int compareStrings(String s1, String s2) {
+		if (s1 == null) {
+			return (s2 == null) ? 0 : -1;
+		} else if (s2 == null) return 1;
+		return s1.compareTo(s2);
+	}
+	
 /*
-(defstruct contact
-  id
-  name
-  nickname
-  note
-  servers
-  client)
-
-(defmethod contact-contact-p ((contact contact))
-  (and (contact-client contact)
-       (member (serverid (contact-client contact))
-               (contact-servers contact)
-               :test #'equal)))
-
-(defun string-compare (s1 s2)
-  (cond ((string-lessp s1 s2) -1)
-        ((string-equal s1 s2) 0)
-        (t 1)))
-
-(defun properties-compare (a1 a2 keys &optional (comparef #'string-compare))
-  (dolist (key keys 0)
-    (let ((comparef comparef))
-      (when (listp key)
-        (setq comparef (cdr key) key (car key)))
-      (let ((res (funcall comparef (funcall key a1) (funcall key a2))))
-        (unless (eql 0 res) (return res))))))
-
-(defun properties-lessp (a1 a2 keys &optional (comparef #'string-compare))
-  (< (properties-compare a1 a2 keys comparef) 0))
-
-(defun contacts-lessp (c1 c2)
-  (properties-lessp c1 c2 '(contact-nickname contact-name contact-id)))
-
-;; Move contacts from old location, under server, to new location,
-;; top-level of contact.
-(defmethod fix-contacts ((client client))
-  (let ((db (db client))
-        (id (id client)))
-    (when (and id (not (db-contents db $ACCOUNT id $CONTACT $SERVERS)))
-      (let ((serverkey (append-db-keys $ACCOUNT id $SERVER))
-            (contactkey (append-db-keys $ACCOUNT id $CONTACT)))
-        (dolist (serverid (db-contents db serverkey))
-          (dolist (otherid (db-contents db serverkey serverid $CONTACT))
-            (let ((old-contactkey (append-db-keys serverkey serverid $CONTACT otherid))
-                  (new-contactkey (append-db-keys contactkey otherid)))
-              (unless (db-get db new-contactkey $NICKNAME)
-                (setf (db-get db new-contactkey $NICKNAME)
-                      (db-get db old-contactkey $NICKNAME)))
-              (setf (db-get db new-contactkey $NOTE)
-                    (let ((note (db-get db new-contactkey $NOTE))
-                          (new-note (db-get db old-contactkey $NOTE)))
-                      (cond (note
-                             (if new-note
-                                 (strcat note #\newline new-note)
-                                 note))
-                            (t note))))
-              (unless (db-get db new-contactkey $NAME)
-                (setf (db-get db new-contactkey $NAME)
-                      (db-get db old-contactkey $NAME)))
-              (unless (db-get db new-contactkey $PUBKEYSIG)
-                (setf (db-get db new-contactkey $PUBKEYSIG)
-                      (db-get db old-contactkey $PUBKEYSIG)))
-              (let ((servers (adjoin serverid
-                                   (explode
-                                    #\space (db-get db new-contactkey $SERVERS))
-                                   :test #'equal)))
-                (setf (db-get db new-contactkey $SERVERS)
-                      (apply #'implode #\space servers)))
-              (setf (db-get db old-contactkey $NICKNAME) nil
-                    (db-get db old-contactkey $NOTE) nil
-                    (db-get db old-contactkey $NAME) nil
-                    (db-get db old-contactkey $PUBKEYSIG) nil))))))))
-
 (defmethod getcontacts ((client client) &optional all-p)
   "Get contacts for the current server.
    Contacts are sorted by nickname, name, id
