@@ -1,6 +1,7 @@
 package com.truledger.client;
 
 import java.math.BigInteger;
+import java.util.ArrayList;
 
 import org.spongycastle.util.encoders.Base64;
 
@@ -150,7 +151,94 @@ public class Utility {
 		  buf[i] = tail.charAt(i);
 	  }
 	  return tail.toString();
-  }	
+  }
+  
+  /**
+   * Compare two, possibly null strings.
+   * null is considered less than non-null
+   * @param s1
+   * @param s2
+   * @return -1, 0, 1 according to s1 < s2, s1 == s2, s1 > s2
+   */
+  public static int compareStrings(String s1, String s2) {
+	  if (s1 == null) {
+		  return (s2 == null) ? 0 : -1;
+	  } else if (s2 == null) return 1;
+	  return s1.compareTo(s2);
+  }
+
+  /**
+   * Explode a string at a separator
+   * @param separator The separator character
+   * @param string A string
+   * @return A list of the substrings of string around the separator
+   */
+  public static String[] explode(char separator, String string) {
+	  if (string == null) return null;
+	  int len = string.length();
+	  int start = 0;
+	  int end;
+	  ArrayList<String> res = new ArrayList<String>(5);
+	  while (start < len) {
+		  end = string.indexOf(separator, start);
+		  if (end < 0) end = len;
+		  res.add(string.substring(start, end));
+		  start = end + 1;
+	  }
+	  return res.toArray(new String[res.size()]);
+  }
+  
+  /**
+   * Append strings with a separator between them
+   * @param separator
+   * @param strings
+   * @return
+   */
+  public static String implode(char separator, String[] strings) {
+	  if (strings == null) return "";
+	  int len = -1;
+	  for (String string: strings) len += string.length() + 1;
+	  StringBuilder buf = new StringBuilder(len);
+	  boolean first = true;
+	  for (String string: strings) {
+		  if (first) first = false;
+		  else buf.append(separator);
+		  buf.append(string);
+	  }
+	  return buf.toString();
+  }
+  
+  /**
+   * Append addedString to strings with separator between each element.
+   * @param separator
+   * @param addedString
+   * @param strings
+   * @return
+   */
+  public static String implode(char separator, String addedString, String[] strings) {
+	  if (strings == null) return addedString;
+	  int len = addedString.length();
+	  for (String string: strings) len += string.length() + 1;
+	  StringBuilder buf = new StringBuilder(len);
+	  for (String string: strings) {
+		  buf.append(separator);
+		  buf.append(string);
+	  }
+	  return buf.toString();
+  }
+  
+  /**
+   * @param needle string to search for
+   * @param haystack array of strings in which to search
+   * @return index of needle in haystack, or -1 if not found
+   */
+  public static int position(String needle, String[] haystack) {
+	  for (int i=0; i<haystack.length; i++) {
+		  if (needle.equals(haystack[i])) return i;
+	  }
+	  return -1;
+  }
+ 
 }
 
 //////////////////////////////////////////////////////////////////////

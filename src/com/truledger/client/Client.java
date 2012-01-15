@@ -830,113 +830,146 @@ public class Client {
 		 *         Comparison is by nickname, name, then id
 		 */
 		public int compareTo(Contact c2) {
-			int res = compareStrings(nickname, c2.nickname);
+			int res = Utility.compareStrings(nickname, c2.nickname);
 			if (res != 0) return res;
-			res = compareStrings(name, c2.name);
+			res = Utility.compareStrings(name, c2.name);
 			if (res != 0) return res;
-			return compareStrings(id, c2.id);
+			return Utility.compareStrings(id, c2.id);
 		}
+	}
+	
+	/**
+	 * Get contacts for the current server.
+     * Contacts are sorted by nickname, name, id
+     * Signals an error or returns a list of CONTACT instances.
+	 * @param all
+	 * @return contacts for the current server.
+	 */
+	public Contact[] getContacts() throws ClientException {
+		return this.getContacts(false);
 	}
 
 	/**
-	 * Compare two, possibly null strings.
-	 * null is considered less than non-null
-	 * @param s1
-	 * @param s2
-	 * @return -1, 0, 1 according to s1 < s2, s1 == s2, s1 > s2
+	 * Get contacts for the current server.
+     * Contacts are sorted by nickname, name, id
+     * Signals an error or returns a list of CONTACT instances.
+     * If ALL is true, return all contacts.
+     * Otherwise, return only contacts for the current server.
+	 * @param all
+	 * @return
 	 */
-	public static int compareStrings(String s1, String s2) {
-		if (s1 == null) {
-			return (s2 == null) ? 0 : -1;
-		} else if (s2 == null) return 1;
-		return s1.compareTo(s2);
+	public Contact[] getContacts(boolean all) throws ClientException {
+		this.requireCurrentServer();
+		ClientDB.AccountDB acctDB = db.getAccountDB();
+		String[] ids = acctDB.contents(this.contactkey());
+		ArrayList<Contact> res = new ArrayList<Contact>(ids.length);
+		for (String otherid: ids) {
+			Contact contact = this.getContact(otherid, false, false);
+			if (all || Utility.position(serverid, contact.servers)>=0) {
+				res.add(contact);
+			}
+		}
+		return res.toArray(new Contact[res.size()]);
 	}
 	
+	/**
+	 * Get a contact from the database or the server
+	 * @param otherid The id of the desired contact
+	 * @param add True to add the contact to the database
+	 * @param probeserver True to probe the server for the contact (implied if ADD is true)
+	 * @return The Contact, with all the fields we know populated
+	 * @throws ClientException If there's an error talking to the server or the database
+	 */
+	public Contact getContact(String otherid, boolean add, boolean probeserver) throws ClientException {
+		if (this.currentServer() == null) return null;
+		String pubkeysig = this.getContactProp(otherid,  T.PUBKEYSIG);
+		if (pubkeysig == null) {
+			if (add) {
+				this.addContact(otherid);
+				pubkeysig = this.getContactProp(otherid, T.PUBKEYSIG);
+			} else if (probeserver) {
+				String[] sig_name = this.getID(otherid);
+				pubkeysig = sig_name[0];
+				String name = sig_name[1];
+				if (pubkeysig == null) return null;
+				return new Contact(otherid, name, null, null, new String[]{serverid}, this);
+			}
+		}
+		if (pubkeysig != null) {
+			String name = this.getContactProp(otherid, T.NAME);
+			String nickname = this.getContactProp(otherid, T.NICKNAME);
+			String note = this.getContactProp(otherid, T.NOTE);
+			String[] servers = Utility.explode(' ', this.getContactProp(otherid, T.SERVERS));
+			return new Contact(otherid, name, nickname, note, servers, this);
+		}
+		return null;
+	}
+
+	/**
+	 * Get a contact from the database or the server
+	 * @param otherid The id of the desired contact
+	 * @param add True to add the contact to the database, after getting it from the server
+	 * @return The Contact, with all the fields we know populated
+	 * @throws ClientException If there's an error talking to the server or the database
+	 */
+	public Contact getContact(String otherid, boolean add) throws ClientException {
+		return this.getContact(otherid, add, false);
+	}
+	
+	/**
+	 * Get a contact from the database
+	 * @param otherid The id of the desired contact
+	 * @return The Contact, with all the fields we know populated
+	 * @throws ClientException If there's an error talking to the server or the database
+	 */
+	public Contact getContact(String otherid) throws ClientException {
+		return this.getContact(otherid, false, false);
+	}
+	
+	/**
+	 * Add a contact to the database, or change its nickname and/or note
+	 * Fetch the contact from the server if unknown on the client.
+	 * @param otherid The id of the contact
+	 * @param nickname The contact's nickname, or null if none
+	 * @param note A note about the contact, or null if none
+	 * @return The pubkeysig message for the contact
+	 * @throws ClientException
+	 */
+	public String addContact(String otherid, String nickname, String note) throws ClientException {
+		this.requireCurrentServer();
+		String[] servers = Utility.explode(' ', this.getContactProp(otherid, T.SERVERS));
+		if (servers==null || Utility.position(serverid, servers)<0) {
+			this.setContactProp(otherid, T.SERVERS, Utility.implode(' ', serverid, servers));
+		}
+		String pubkeysig = this.getContactProp(otherid, T.PUBKEYSIG);
+		if (pubkeysig != null) {
+			if (nickname != null) this.setContactProp(otherid, T.NICKNAME, nickname);
+			if (note != null) this.setContactProp(otherid, T.NOTE, note);
+		} else {
+			String[] sig_name = this.getID(otherid);
+			if (sig_name == null) throw new ClientException("Can't find id at server: " + otherid);
+			pubkeysig = sig_name[0];
+			String name = sig_name[1];
+			if (nickname == null) nickname = Utility.isBlank(name) ? "anonymous" : name;
+			this.setContactProp(otherid,  T.NICKNAME, nickname);
+			this.setContactProp(otherid,  T.NOTE, note);
+			this.setContactProp(otherid, T.NAME, name);
+			this.setContactProp(otherid, T.PUBKEYSIG, pubkeysig);
+		}
+		return pubkeysig;
+	}
+	
+	/**
+	 * Add contact to database if it isn't yet there by fetching info from the server
+	 * @param otherid The id to add
+	 * @return The pubkeysig message for the contact
+	 * @throws ClientException If there is an error talking to the server
+	 */
+	public String addContact(String otherid) throws ClientException {
+		return this.addContact(otherid, null, null);
+	}
+
 /*
-(defmethod getcontacts ((client client) &optional all-p)
-  "Get contacts for the current server.
-   Contacts are sorted by nickname, name, id
-   Signals an error or returns a list of CONTACT instances.
-   If ALL-P is true, return all contacts.
-   Otherwise, return only contacts for the current server."
-  (let ((db (db client)))
-    (require-current-server client "In getcontacts(): Server not set")
-    (fix-contacts client)
-    (with-db-lock (db (userreqkey client))
-      (let* ((ids (db-contents db (contactkey client)))
-             (serverid (serverid client))
-             (res (loop
-                     for otherid in ids
-                     for contact = (getcontact-internal client otherid nil nil)
-                     when contact
-                     collect contact)))
-        (unless all-p
-          (setq res
-                (delete-if (lambda (contact)
-                             (not (member serverid (contact-servers contact)
-                                          :test #'equal)))
-                           res)))
-        (sort res #'contacts-lessp)))))
-
-(defmethod getcontact ((client client) otherid &optional add)
-  "Get a contact, by ID. Return a CONTACT instance."
-  (when (current-server client)
-    (with-db-lock ((db client) (userreqkey client))
-      (getcontact-internal client otherid add))))
-
-(defmethod getcontact-internal ((client client) otherid &optional add (probeserver t))
-  (fix-contacts client)
-  (let ((pubkeysig (contactprop client otherid $PUBKEYSIG)))
-    (unless pubkeysig
-      (cond (add
-             (addcontact-internal client otherid)
-             (setq pubkeysig (contactprop client otherid $PUBKEYSIG)))
-            (probeserver
-             (multiple-value-bind (pubkeysig name) (get-id client otherid)
-               (return-from getcontact-internal
-                 (and pubkeysig (make-contact :id otherid :name name
-                                              :client client)))))))
-    (when pubkeysig
-      (make-contact
-       :id otherid
-       :name (contactprop client otherid $NAME)
-       :nickname (contactprop client otherid $NICKNAME)
-       :note (contactprop client otherid $NOTE)
-       :servers (explode #\space (contactprop client otherid $SERVERS))
-       :client client))))
-  
-(defmethod addcontact ((client client) otherid &optional nickname note)
-  "Add a contact to the current server.
-   If it's already there, change its nickname and note, if included."
-  (require-current-server client)
-  (with-db-lock ((db client) (userreqkey client))
-    (addcontact-internal client otherid nickname note)))
-
-(defmethod addcontact-internal ((client client) otherid &optional nickname note)
-  (let ((db (db client))
-        pubkeysig
-        name)
-    (let* ((serverid (serverid client))
-           (servers (explode #\space (contactprop client otherid $SERVERS))))
-      (unless (member serverid servers :test #'equal)
-        (setf (db-get db (contactkey client otherid $SERVERS))
-              (apply #'implode #\space serverid servers))))
-    (cond ((contactprop client otherid $PUBKEYSIG)
-           (when nickname
-             (setf (db-get db (contactkey client otherid $NICKNAME)) nickname))
-           (when note
-             (setf (db-get db (contactkey client otherid $NOTE)) note)))
-          (t
-           (multiple-value-setq (pubkeysig name) (get-id client otherid))
-           (unless pubkeysig (error "Can't find id at server: ~s" otherid))
-           (unless nickname
-             (setq nickname (or name "anonymous")))
-           (setf (db-get db (contactkey client otherid $NICKNAME)) nickname
-                 (db-get db (contactkey client otherid $NOTE)) note
-                 (db-get db (contactkey client otherid $NAME)) name
-                 (db-get db (contactkey client otherid $PUBKEYSIG)) pubkeysig)))
-    pubkeysig))
-
 (defmethod deletecontact ((client client) otherid)
   "Delete a contact from the current server."
   (let ((db (db client)))
@@ -1040,29 +1073,34 @@ public class Client {
     (when (or changed-p (not (eql (length contacts) (length server-contacts))))
       (setf (get-server-contacts client) contacts))
     (values contacts changed-p)))
-
-(defmethod get-id ((client client) id)
-  "Check for an id at the server. Return false if not there.
-   Return two values: pubkeysig & name"
-  (let ((db (db client))
-        (serverid (serverid client)))
-    (when serverid
-      (let* ((key (append-db-keys (userserverkey client $PUBKEYSIG) id))
-             (pubkeysig (db-get db key))
-             (needstore nil))
-        (unless pubkeysig
-          (setq pubkeysig (sendmsg client $ID serverid id)
-                needstore t))
-        (let ((args (ignore-errors
-                      (unpack-servermsg client pubkeysig $ATREGISTER))))
-          (when args
-            (setq args (getarg $MSG args))
-            (let ((pubkey (getarg $PUBKEY args))
-                  (name (getarg $NAME args)))
-              (when (equal id (pubkey-id pubkey))
-                (when needstore (setf (db-get db key) pubkeysig))
-                (values pubkeysig name)))))))))
-
+*/
+	
+	/**
+	 * Check for an ID in the database and on the server
+	 * @param id The ID to check for
+	 * @return [pubkeysig, name] or null if not found
+	 * @throws ClientException If there is an error talking to the server or the database
+	 */
+	public String[] getID(String id) throws ClientException {
+		if (serverid == null) return null;
+		String key = this.userServerKey(T.PUBKEYSIG);
+		ClientDB.AccountDB acctDB = db.getAccountDB(); 
+		String pubkeysig = acctDB.get(key, id);
+		boolean needstore = false;
+		if (pubkeysig == null) {
+			pubkeysig = this.sendmsg(new String[]{T.ID, serverid, id});
+			needstore = true;
+		}
+		Parser.Dict args = this.unpackServermsg(pubkeysig, T.ATREGISTER);
+		args = (Parser.Dict)args.get(T.MSG);
+		String pubkey = args.stringGet(T.PUBKEY);
+		String name = args.stringGet(T.NAME);
+		if (!id.equals(Crypto.getKeyID(pubkey))) return null;
+		if (needstore) acctDB.put(key,  id, pubkeysig);
+		return new String[]{pubkeysig, name};
+	}
+	
+/*
 (defun acct-compare (a1 a2)
   (cond ((equal a1 a2) 0)
         ((equal a1 $MAIN) -1)
@@ -3597,22 +3635,27 @@ public class Client {
     (if permission
         (append-db-keys key permission)
         key)))
-
-(defmethod contactkey ((client client) &optional otherid prop)
-  (let ((key (append-db-keys $ACCOUNT (id client) $CONTACT)))
-    (cond (otherid
-           (setq key (append-db-keys key otherid))
-           (if prop
-               (append-db-keys key prop)
-               key))
-          (t key))))
-
-(defmethod contactprop ((client client) otherid prop)
-    (db-get (db client) (contactkey client otherid prop)))
-
-(defmethod (setf contactprop) (value (client client) otherid prop)
-  (setf (db-get (db client) (contactkey client otherid prop)) value))
-
+*/
+	
+	public String contactkey() {
+		return this.contactkey(null);
+	}
+	
+	public String contactkey(String otherid) {
+		String res = this.id + '/' + T.CONTACT + '/';
+		if (otherid != null) res += '/' + otherid;
+		return res;
+	}
+	
+	public String getContactProp (String otherid, String prop) {
+		return db.getAccountDB().get(this.contactkey(otherid), prop);
+	}
+	
+	public void setContactProp(String otherid, String prop, String value) {
+		db.getAccountDB().put(this.contactkey(otherid), prop, value);
+	}
+	
+/*
 (defmethod userhistorykey ((client client))
   (userserverkey client $HISTORY))
 
