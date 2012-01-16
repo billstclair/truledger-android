@@ -11,6 +11,8 @@ import com.truledger.client.Client;
 import com.truledger.client.ClientDB;
 import com.truledger.client.Crypto;
 import com.truledger.client.FSDB;
+import com.truledger.client.LispList;
+import com.truledger.client.LispList.Keyword;
 import com.truledger.client.Parser;
 import com.truledger.client.T;
 import com.truledger.client.TruledgerActivity;
@@ -401,6 +403,20 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     		assertEquals("register message", req.get(T.REQUEST), T.REGISTER);
     		assertEquals("customer = serverid", req.get(T.CUSTOMER), req.get(T.SERVERID));
     	}
+    }
+    
+    public void testLispList() {
+    	Keyword id = Keyword.intern("id");
+    	Keyword name = Keyword.intern("name");
+    	LispList list = LispList.valueOf(new Object[]{id, "foo", name, "Bill"});
+    	try {
+    		String str = list.prin1ToString();
+    		list = LispList.parse(str);
+    	} catch (Exception e) {
+    		assertTrue("Error in print or parse: " + e.toString(), false);
+    	}
+    	assertEquals(list.getprop(id), "foo");
+    	assertEquals(list.getprop(name), "Bill");
     }
 }
 

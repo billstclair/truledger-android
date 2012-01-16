@@ -4,14 +4,18 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Stack;
 
+/**
+ * A lisp-like list, with parsing and printing 
+ * @author billstclair
+ *
+ */
 public class LispList extends ArrayList<Object> {
 	/**
 	 * A lisp-like interned keyword
-	 * @author Bill St. Clair
 	 */
 	public static class Keyword {
 		private String namestring;
-		public Keyword(String namestring) {
+		private Keyword(String namestring) {
 			this.namestring = namestring;
 		}
 		public String getNamestring() {
@@ -20,44 +24,70 @@ public class LispList extends ArrayList<Object> {
 		public String toString() {
 			return ":" + namestring;
 		}
-	}
 
-	private static final HashMap<String, Keyword> keywordHash = new HashMap<String, Keyword>();
+		/**
+		 * Map strings to Keyword instances for internKeyword
+		 */
+		private static final HashMap<String, Keyword> keywordHash = new HashMap<String, Keyword>();
 
-	/**
-	 * Intern a string into a keyword
-	 * @param namestring
-	 * @return
-	 */
-	public static Keyword internKeyword(String namestring) {
-		Keyword res = keywordHash.get(namestring);
-		if (res != null) return res;
-		return keywordHash.put(namestring,  new Keyword(namestring));
+		/**
+		 * Intern a string into a keyword
+		 * @param namestring
+		 * @return
+		 */
+		public static Keyword intern(String namestring) {
+			Keyword res = keywordHash.get(namestring);
+			if (res != null) return res;
+			res = new Keyword(namestring);
+			keywordHash.put(namestring,  res);
+			return res;
+		}
 	}
 
 	private static final long serialVersionUID = -7322719017873541150L;
 
+	/**
+	 * Default constructor
+	 */
 	public LispList() {
 		super();
 	}
 
+	/**
+	 * Create a LispList with initially enough space for size elements
+	 * @param size
+	 */
 	public LispList(int size) {
 		super(size);
 	}
 
+	/**
+	 * Convert an array into a LispList
+	 * @param array
+	 * @return
+	 */
 	public static LispList valueOf(Object[] array) {
 		LispList res = new LispList(array.length);
-		res.add(array);
+		for (Object elt: array) {
+			res.add(elt);
+		}
 		return res;
 	}
 
-	public String toString() {
+	/**
+	 * Like Lisp's prin1-to-string function
+	 */
+	public String prin1ToString() throws Exception {
 		StringBuilder res = new StringBuilder();
-		this.toStringBuf(new StringBuilder());
+		this.prin1ToBuf(res);
 		return res.toString();
 	}
 
-	public void toStringBuf(StringBuilder res) {
+	/**
+	 * Append the printed representation of this LispList to res
+	 * @param res
+	 */
+	public void prin1ToBuf(StringBuilder res) throws Exception {
 		res.append('(');
 		boolean first = true;
 		for (Object elt: this) {
@@ -70,9 +100,9 @@ public class LispList extends ArrayList<Object> {
 			} else if (elt instanceof Keyword) {
 				res.append(elt.toString());
 			} else if (elt instanceof LispList) {
-				((LispList)elt).toStringBuf(res);
+				((LispList)elt).prin1ToBuf(res);
 			} else {
-				throw new Error("Only strings, keywords, and Lists supported");
+				throw new Exception("Only strings, keywords, and Lists supported");
 			}
 		}
 		res.append(')');
@@ -100,7 +130,7 @@ public class LispList extends ArrayList<Object> {
 				stack.push(res);
 				res = new LispList();
 			} else if (tok == RIGHTPAREN) {
-				if (stack.size() == 0) {
+				if (stack==null || stack.size()==0) {
 					if (i+1 < size) throw new Exception("Garbage after final closing paren");
 					break;
 				} else {
@@ -113,6 +143,13 @@ public class LispList extends ArrayList<Object> {
 		return res;
 	}
 	
+	/**
+	 * Convert string into a LispList of tokens
+	 * Each token is either LEFTPAREN, RIGHTPARENT, a string, or a Keyword
+	 * @param string
+	 * @return
+	 * @throws Exception
+	 */
 	public static LispList tokenize(String string) throws Exception {
 		LispList res = new LispList();
 		int start = 0;
@@ -129,6 +166,7 @@ public class LispList extends ArrayList<Object> {
 					instring = false;
 					buf.append(string.substring(start, i));
 					res.add(buf.toString());
+					buf.setLength(0);
 				} else if (chr == '\\') {
 					escaped = true;
 					buf.append(string.substring(start, i));
@@ -136,7 +174,7 @@ public class LispList extends ArrayList<Object> {
 				}
 			} else if (inkeyword) {
 				if (" :\n\"".indexOf(chr) >= 0) {
-					res.add(new Keyword(string.substring(start, i)));
+					res.add(Keyword.intern(string.substring(start, i)));
 					inkeyword = false;
 					i--;
 				}
@@ -156,5 +194,21 @@ public class LispList extends ArrayList<Object> {
 		if (inkeyword) res.add(new Keyword(string.substring(start)));
 		else if (instring) throw new Exception("Missing closing double-quote");
 		return res;
+	}
+	
+	/**
+	 * Lookup the value for a key in a LispList that has alternating keys and values
+	 * @param key
+	 * @return
+	 */
+	public Object getprop(Keyword key) {
+		if (key == null) return null;
+		int size = this.size();
+		for (int i=0; i<size; i+=2) {
+			if (key.equals(this.get(i))) {
+				return this.get(i+1);
+			}
+		}
+		return null;
 	}
 }
