@@ -408,15 +408,22 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     public void testLispList() {
     	Keyword id = Keyword.intern("id");
     	Keyword name = Keyword.intern("name");
-    	LispList list = LispList.valueOf(new Object[]{id, "foo", name, "Bill"});
+    	LispList list1 = LispList.valueOf(new Object[]{id, "foo", name, "Bill"});
+    	LispList list2 = LispList.valueOf(new Object[]{name, "Joe", id, "bar"});
+    	LispList list = LispList.valueOf(new Object[]{list1, list2});
     	try {
     		String str = list.prin1ToString();
     		list = LispList.parse(str);
     	} catch (Exception e) {
     		assertTrue("Error in print or parse: " + e.toString(), false);
     	}
-    	assertEquals(list.getprop(id), "foo");
-    	assertEquals(list.getprop(name), "Bill");
+    	assertTrue(list.size() == 2);
+    	list1 = (LispList)list.get(0);
+    	list2 = (LispList)list.get(1);
+    	assertEquals(list1.getprop(id), "foo");
+    	assertEquals(list1.getprop(name), "Bill");
+    	assertEquals(list2.getprop(id), "bar");
+    	assertEquals(list2.getprop(name), "Joe");
     }
 }
 

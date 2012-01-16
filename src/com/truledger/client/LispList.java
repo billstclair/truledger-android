@@ -129,6 +129,7 @@ public class LispList extends ArrayList<Object> {
 				if (stack == null) stack = new Stack<LispList>();
 				stack.push(res);
 				res = new LispList();
+				continue;
 			} else if (tok == RIGHTPAREN) {
 				if (stack==null || stack.size()==0) {
 					if (i+1 < size) throw new Exception("Garbage after final closing paren");
