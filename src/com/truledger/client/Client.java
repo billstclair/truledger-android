@@ -968,25 +968,44 @@ public class Client {
 	public String addContact(String otherid) throws ClientException {
 		return this.addContact(otherid, null, null);
 	}
+	
+	/**
+	 * Delete a contact from the current user's 
+	 * @param otherid The contact to delete
+	 * @throws ClientException if no user is logged in
+	 */
+	public void deleteContact(String otherid) throws ClientException {
+		this.requireCurrentUser();
+		String key = this.contactkey(otherid);
+		ClientDB.AccountDB acctDB = db.getAccountDB();
+		String[] props = acctDB.contents(key);
+		for (String prop: props) {
+			acctDB.put(key,  prop, null);
+		}
+	}
+	
+	private static String $SERVER_CONTACTS_SALT = "server-contacts-salt";
+	
+	/**
+	 * @return The string to use as a key for storing contacts on the server
+	 */
+	private String serverContactsKey() {
+		return Crypto.sha1(Utility.xorSalt(id,  $SERVER_CONTACTS_SALT));
+	}
+	
+	/**
+	 * Get the encoded contacts string from the server
+	 * @return "((:id <id> :name <name> :nickname <nickname> :note <note> :servers <servers>) ...)"
+	 */
+	private String getServerContactsString() throws ClientException {
+		return this.readData(this.serverContactsKey())[0];
+	}
+	
+	private void setServerContactsString(String value) throws ClientException {
+		this.writeData(this.serverContactsKey(), value==null ? "" : value);
+	}
 
 /*
-(defmethod deletecontact ((client client) otherid)
-  "Delete a contact from the current server."
-  (let ((db (db client)))
-    (with-db-lock (db (userreqkey client))
-      (let ((key (contactkey client otherid)))
-        (dolist (k (db-contents db key))
-          (setf (db-get db key k) nil))))))
-
-(defconstant $SERVER-CONTACTS-SALT "server-contacts-salt")
-
-(defun server-contacts-key (client)
-  (sha1 (xor-salt (id client) $SERVER-CONTACTS-SALT)))
-
-(defmethod %get-server-contacts ((client client))
-  (ignore-errors
-    (readdata client (server-contacts-key client))))
-
 (defmethod (setf %get-server-contacts) (value client)
   (writedata client (server-contacts-key client) (or value ""))
   value)
@@ -2927,23 +2946,10 @@ public class Client {
 		return this.readData(key, anonymously, serverurl, false);
 	}
 	
-/*
-         (save-serverid (prog1 (serverid client)
-                        (setf (serverid client) serverid)))
-         (servermsg (process server msg))
-         (args (unwind-protect (unpack-servermsg client servermsg)
-                 (setf (serverid client) save-serverid)))
-         (request (getarg $REQUEST args))
-         (reqid (getarg $ID args))
-         (time (getarg $TIME args))
-         (data (getarg $DATA args)))
-    (unless (equal request $ATREADDATA)
-      (error "Unknown response type: ~s, expected: ~s" request $ATREADDATA))
-    (unless (equal (if anonymous-p "0" (id client)) reqid)
-      (error "Wrong id returned from readdata"))
-    (values data time)))
-*/
-	
+	public String[] readData(String key) throws ClientException {
+		return this.readData(key, false, null, false);
+	}
+		
 	public void writeData(String key, String data, boolean anonymously) throws ClientException {
 		try {
 			this.writeDataInternal(key, data, anonymously);

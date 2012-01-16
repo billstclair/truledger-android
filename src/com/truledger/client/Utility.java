@@ -220,6 +220,7 @@ public class Utility {
 	  int len = addedString.length();
 	  for (String string: strings) len += string.length() + 1;
 	  StringBuilder buf = new StringBuilder(len);
+	  buf.append(addedString);
 	  for (String string: strings) {
 		  buf.append(separator);
 		  buf.append(string);
@@ -237,6 +238,36 @@ public class Utility {
 		  if (needle.equals(haystack[i])) return i;
 	  }
 	  return -1;
+  }
+  
+  /**
+   * Escape characters in a string
+   * @param string The string to escape
+   * @param escape The escape character
+   * @param charsToEscape The output will have the escape character in front of these characters and itself
+   * @return
+   */
+  public static String escapeString(String string, char escape, String charsToEscape) {
+	  int len = string.length();
+	  StringBuilder res = new StringBuilder(len + 5);
+	  escapeStringToBuf(string, escape, charsToEscape, res);
+	  return res.length()==len ? string : res.toString();
+  }
+
+  /**
+   * Write string to buf escaping charsToEscape & escape with escape
+   * @param string
+   * @param escape
+   * @param charsToEscape
+   * @param buf
+   */
+  public static void escapeStringToBuf(String string, char escape, String charsToEscape, StringBuilder buf) {
+	  int len = string.length();
+	  for (int i=0; i<len; i++) {
+		  char chr = string.charAt(i);
+		  if (chr==escape || charsToEscape.indexOf(chr) >= 0) buf.append(escape);
+		  buf.append(chr);
+	  }
   }
  
 }
