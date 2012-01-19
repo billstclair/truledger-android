@@ -212,4 +212,13 @@ public class LispList extends ArrayList<Object> {
 		}
 		return null;
 	}
+	
+	/**
+	 * Get a property that you know has a String value
+	 * @param key
+	 * @return (String)this.getprop(key)
+	 */
+	public String getString(Keyword key) {
+		return (String)this.getprop(key);
+	}
 }

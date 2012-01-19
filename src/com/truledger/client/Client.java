@@ -10,8 +10,10 @@ import java.security.KeyPair;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.http.HttpResponse;
 import org.apache.http.NameValuePair;
@@ -21,6 +23,8 @@ import org.apache.http.message.BasicNameValuePair;
 
 import android.content.Context;
 import android.net.http.AndroidHttpClient;
+
+import com.truledger.client.LispList.Keyword;
 
 /**
  * A Truledger client API. Talks the protocol of truledger.com
@@ -802,6 +806,9 @@ public class Client {
 		public String[] servers;
 		public Client client;
 	
+		public Contact() {
+		}
+		
 		public Contact(String id, String name, String nickname, String note, String[] servers, Client client) {
 			this.id = id;
 			this.name = name;
@@ -1004,96 +1011,205 @@ public class Client {
 	private void setServerContactsString(String value) throws ClientException {
 		this.writeData(this.serverContactsKey(), value==null ? "" : value);
 	}
-
-/*
-(defmethod (setf %get-server-contacts) (value client)
-  (writedata client (server-contacts-key client) (or value ""))
-  value)
-
-(defun pack-contact (contact)
-  (check-type contact contact)
-  `(:id ,(contact-id contact)
-    :name ,(contact-name contact)
-    :nickname ,(contact-nickname contact)
-    :note ,(contact-note contact)
-    :servers ,(contact-servers contact)))
-
-(defun unpack-contact (client list)
-  (apply #'make-contact :client client list))
-
-(defun pack-contacts (contacts)
-  (prin1-to-string (mapcar #'pack-contact contacts)))
-
-(defun unpack-contacts (client string)
-  (mapcar (lambda (parms) (unpack-contact client parms))
-          (read-from-string string)))
-
-(defmethod get-server-contacts ((client client))
-  (let ((string (%get-server-contacts client)))
-    (and string
-         (unpack-contacts
-          client (privkey-decrypt string (privkey client))))))
-
-(defmethod (setf get-server-contacts) (value (client client))
-  (setf (%get-server-contacts client)
-        (pubkey-encrypt (pack-contacts value) (privkey client)))
-  value)
-
-(defun merge-contact-strings (old new)
-  (if (blankp old) new old))
-
-(defmethod sync-contacts ((client client))
-  (let ((contacts (getcontacts client t))
-        (server-contacts (ignore-errors (get-server-contacts client)))
-        (changed-p nil))
-    (dolist (sc server-contacts)
-      (let* ((otherid (contact-id sc))
-             (c (find otherid contacts :test #'equal :key #'contact-id)))
-        (cond (c
-               (let ((new-nick
-                      (merge-contact-strings
-                       (contact-nickname c) (contact-nickname sc)))
-                     (new-note
-                      (merge-contact-strings
-                      (contact-note c) (contact-note sc)))
-                     (new-servers
-                      (union (contact-servers c) (contact-servers sc)
-                             :test #'equal)))
-                 (unless (equal new-nick (contact-nickname c))
-                   (setf (contact-nickname c) new-nick
-                         (contactprop client otherid $NICKNAME) new-nick))
-                 (unless (equal new-note (contact-note c))
-                   (setf (contact-note c) new-note
-                         (contactprop client otherid $NOTE) new-note))
-                 (unless (eql (length new-servers) (length (contact-servers c)))
-                   (setf (contact-servers c) new-servers
-                         (contactprop client otherid $SERVERS)
-                         (apply #'implode #\space new-servers)))
-                 (unless changed-p
-                   (setq changed-p
-                         (not (and (equal new-nick (contact-nickname sc))
-                                   (equal new-note (contact-note sc))
-                                   (eql (length new-servers)
-                                        (length (contact-servers sc)))))))))
-              (t (push sc contacts)
-                 (setq changed-p t)
-                 (let ((pubkeysig (and (not (contactprop client otherid $PUBKEYSIG))
-                                       (ignore-errors (get-id client otherid)))))
-                   (when pubkeysig
-                     (setf (contactprop client otherid $PUBKEYSIG) pubkeysig))
-                   (setf (contactprop client otherid $NICKNAME)
-                         (contact-nickname sc)
-                         (contactprop client otherid $NOTE)
-                         (contact-note sc)
-                         (contactprop client otherid $NAME)
-                         (contact-name sc)
-                         (contactprop client otherid $SERVERS)
-                         (apply #'implode #\space (contact-servers sc))))))))
-    (when (or changed-p (not (eql (length contacts) (length server-contacts))))
-      (setf (get-server-contacts client) contacts))
-    (values contacts changed-p)))
-*/
 	
+	private static Keyword ID = Keyword.intern("id");
+	private static Keyword NAME = Keyword.intern("name");
+	private static Keyword NICKNAME = Keyword.intern("nickname");
+	private static Keyword NOTE = Keyword.intern("note");
+	private static Keyword SERVERS = Keyword.intern("servers");
+	
+	/**
+	 * Pack a contact into a LispList for printing
+	 * @param contact
+	 * @return
+	 */
+	public LispList packContact(Contact contact) {
+		LispList res = new LispList(10);
+		if (contact.id != null) {
+			res.add(ID);
+			res.add(contact.id);
+		}
+		if (contact.name != null) {
+			res.add(NAME);
+			res.add(contact.name);
+		}
+		if (contact.nickname != null) {
+			res.add(NICKNAME);
+			res.add(contact.nickname);
+		}
+		if (contact.note != null) {
+			res.add(NOTE);
+			res.add(contact.note);
+		}
+		if (contact.servers != null) {
+			res.add(SERVERS);
+			res.add(LispList.valueOf(contact.servers));
+		}
+		return res;
+	}
+	
+	/**
+	 * Unpack a contact list created by packContact()
+	 * @param list
+	 * @return
+	 */
+	public Contact unpackContact(LispList list) {
+		Contact res = new Contact();
+		String id = list.getString(ID);
+		String name = list.getString(NAME);
+		String nickname = list.getString(NICKNAME);
+		String note = list.getString(NOTE);
+		LispList servers = (LispList)list.getprop(SERVERS);
+		if (id != null) res.id = id;
+		if (name != null) res.name = name;
+		if (nickname != null) res.nickname = name;
+		if (note != null) res.note = note;
+		if (servers != null) {
+			int size = servers.size();
+			String[] a = new String[size];
+			for (int i=0; i<size; i++) {
+				a[i] = (String)servers.get(i);
+			}
+			res.servers = a;
+		}
+		return res;
+	}
+	
+	/**
+	 * Return the printed representation of an array of Contacts
+	 * @param contacts
+	 * @return
+	 * @throws ClientException
+	 */
+	public String packContacts(Contact[] contacts) throws ClientException {
+		LispList list = new LispList(contacts.length);
+		for (Contact contact: contacts) {
+			list.add(packContact(contact));
+		}
+		try {
+			return list.prin1ToString();
+		} catch (Exception e) {
+			throw new ClientException(e);
+		}
+	}
+	
+	/**
+	 * Turn a printed representation into an array of Contacts
+	 * @param string
+	 * @return
+	 * @throws ClientException
+	 */
+	public Contact[] unpackContacts(String string) throws ClientException {
+		try {
+			LispList packedContacts = LispList.parse(string);
+			Contact[] res = new Contact[packedContacts.size()];
+			int i = 0;
+			for (Object list: packedContacts) {
+				res[i++] = this.unpackContact((LispList) list);
+			}
+			return res;
+		} catch (Exception e) {
+			throw new ClientException(e);
+		}
+	}
+
+	/**
+	 * Read, decrypt, and return the saved Contacts from the server
+	 * @return
+	 * @throws ClientException
+	 */
+	public Contact[] getServerContacts() throws ClientException {
+		String string = this.getServerContactsString();
+		if (string == null) return null;
+		return this.unpackContacts(Crypto.RSAPrivkeyDecrypt(string, this.privkey));
+	}
+	
+	/**
+	 * Save an array of Contacts on the server as a string
+	 * @param contacts
+	 * @throws ClientException
+	 */
+	public void setServerContacts(Contact[] contacts) throws ClientException {
+		this.setServerContactsString(Crypto.RSAPubkeyEncrypt(this.packContacts(contacts), this.privkey.getPublic()));
+	}
+	
+	/**
+	 * Find an ID in an array of Contacts
+	 * @param id
+	 * @param contacts
+	 * @return
+	 */
+	public static Contact findContact(String id, Contact[] contacts) {
+		for (Contact contact: contacts) {
+			if (id.equals(contact.id)) return contact;
+		}
+		return null;
+	}
+	
+	/**
+	 * Synchronize the local contacts with the saved contacts on the server
+	 * @return the synced, and now saved locally, contacts
+	 * @throws ClientException
+	 */
+	public Contact[] syncContacts() throws ClientException {
+		Contact[] contacts = this.getContacts(true);
+		Contact[] serverContacts = this.getServerContacts();
+		if (serverContacts == null) return contacts;
+		ArrayList<Contact> newContacts = new ArrayList<Contact>();
+		for (Contact sc: serverContacts) {
+			String otherid = sc.id;
+			Contact c = findContact(otherid, contacts);
+			if (c != null) {
+				// Contact in db and on server. Merge new server information.
+				String newnick = sc.nickname;
+				if (Utility.isBlank(c.nickname) && !Utility.isBlank(newnick)) {
+					c.nickname = newnick;
+					this.setContactProp(otherid,  T.NICKNAME, newnick);
+				}
+				String newnote = sc.note;
+				if (Utility.isBlank(sc.note) && !Utility.isBlank(newnote)) {
+					c.note = newnote;
+					this.setContactProp(otherid,  T.NOTE, newnote);
+				}
+				String[] servers = sc.servers;
+				Set<String> set = new HashSet<String>(servers.length);
+				for (String server: servers) set.add(server);
+				for (String server: c.servers) set.add(server);
+				if (set.size() != servers.length) {
+					servers = new String[set.size()];
+					int i = 0;
+					for (String server: set) servers[i++] = server;
+					c.servers = servers;
+					this.setContactProp(otherid,  T.SERVERS, Utility.implode(' ', servers));
+				}
+			} else {
+				// Contact only on server. Write new contact to database.
+				newContacts.add(sc);
+				if (this.getContactProp(otherid,  T.PUBKEYSIG) == null) {
+					try {
+						String pubkeysig = this.getID(otherid)[0];
+						if (pubkeysig != null) {
+							this.setContactProp(otherid, T.PUBKEYSIG, pubkeysig);
+						}
+					} catch (ClientException e) {}
+					this.setContactProp(otherid,  T.NICKNAME, sc.nickname);
+					this.setContactProp(otherid, T.NOTE, sc.note);
+					this.setContactProp(otherid, T.NAME, sc.name);
+					this.setContactProp(otherid,  T.SERVERS, Utility.implode(' ', sc.servers));
+				}
+			}
+		}
+		if (newContacts.size() > 0) {
+			int size = contacts.length + newContacts.size();
+			Contact[] res = new Contact[size];
+			int i = 0;
+			for (Contact c: contacts) res[i++] = c;
+			for (Contact c: newContacts) res[i++] = c;
+			contacts = res;
+		}
+		return contacts;
+	}
+
 	/**
 	 * Check for an ID in the database and on the server
 	 * @param id The ID to check for
