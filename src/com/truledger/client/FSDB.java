@@ -370,6 +370,16 @@ public class FSDB {
 		return this.contents(null);
 	}
 	
+	/**
+	 * Shortcut for contents(dirpath + '/' + subdir);
+	 * @param dirpath
+	 * @param subdir
+	 * @return
+	 */
+	public String[] contents(String dirpath, String subdir) {
+		return contents(dirpath + '/' + subdir);
+	}
+	
 	public String getDbName() {
 		return dbName;
 	}

@@ -10,6 +10,9 @@ import java.security.KeyPair;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.List;
@@ -1235,105 +1238,200 @@ public class Client {
 		return new String[]{pubkeysig, name};
 	}
 	
+	/**
+	 * Compare acct strings
+	 * @param a1
+	 * @param a2
+	 * @return -1, 0, 1 according to a1 <, =, or > a2
+	 */
+	public static int acctCompare(String a1, String a2) {
+		int res = Utility.compareStrings(a1,  a2);
+		if (res == 0) return 0;
+		if (a1.equals(T.MAIN)) return -1;
+		if (a2.equals(T.MAIN)) return 1;
+		return res;
+	}
+	
+	/**
+	 * Return true if a1 < a2, according to acctCompare()
+	 * @param a1
+	 * @param a2
+	 * @return
+	 */
+	public static boolean acctLessp(String a1, String a2) {
+		return acctCompare(a1, a2) < 0;
+	}
+	
+	/**
+	 * Get the sub-account names, sorted
+	 * @return
+	 * @throws ClientException
+	 */
+	public String[] getAccts() throws ClientException {
+		this.requireCurrentServer();
+		this.initServerAccts();
+		String[] accts = db.getAccountDB().contents(this.userBalanceKey());
+		Arrays.sort(accts, new Comparator<String>() { 
+			public int compare(String a1, String a2) {
+				return acctCompare(a1, a2);
+			};
+		});
+		return accts;
+	}
+	
+	/**
+	 * Package up information about an asset
+	 * @author billstclair
+	 */
+	public static class Asset {
+		public String id;
+		public String assetid;
+		public String scale;
+		public String precision;
+		public String name;
+		public String issuer;
+		public String percent;
+		public Asset() {
+		}
+		public Asset(String id, String assetid, String scale, String precision, String name, String issuer, String percent) {
+			this.id = id;
+			this.assetid = assetid;
+			this.scale = scale;
+			this.precision = precision;
+			this.name = name;
+			this.issuer = issuer;
+			this.percent = percent;
+		}
+	}
+	
+	/**
+	 * Compare two assets on name and assetid
+	 * @param a1
+	 * @param a2
+	 * @return -1, 0, 1 according to a1 <, =, or > a2
+	 */
+	public static int assetCompare(Asset a1, Asset a2) {
+		int res = Utility.compareStrings(a1.name, a2.name);
+		if (res != 0) return res;
+		return Utility.compareStrings(a1.assetid, a2.assetid);
+	}
+	
+	/**
+	 * True if a1 < a2 according to assetCompare
+	 * @param a1
+	 * @param a2
+	 * @return
+	 */
+	public static boolean assetLessp(Asset a1, Asset a2) {
+		return assetCompare(a1, a2) < 0;
+	}
+
+	/**
+	 * Get a sorted list of all the assets in balances for the current account
+	 * @return
+	 * @throws ClientException
+	 */
+	public Asset[] getAssets() throws ClientException {
+		if (serverid == null) return null;
+		String key = this.userBalanceKey();
+		ClientDB.AccountDB acctDB = db.getAccountDB();
+		String[] accts = acctDB.contents(key);
+		HashMap<String, Asset> assets = new HashMap<String, Asset>(accts.length);
+		for (String acct: accts) {
+			for (String assetid: acctDB.contents(key, acct)) {
+				if (assets.get(assetid) == null) {
+					Asset asset = this.getAsset(assetid);
+					if (asset != null) assets.put(assetid,  asset);
+				}
+			}
+		}
+		Asset[] res = new Asset[assets.size()];
+		int i = 0;
+		for (Asset asset: assets.values()) res[i++] = asset;
+		Arrays.sort(res, new Comparator<Asset>() {
+			public int compare(Asset a1, Asset a2) {
+				return assetCompare(a1, a2);
+			}
+		});
+		return res;
+	}
+	
+	/**
+	 * Get an asset.
+	 * @param assetid The ID of the asset
+	 * @param forceserver true to force asking the server
+	 * @return
+	 * @throws ClientException
+	 */
+	public Asset getAsset(String assetid, boolean forceserver) throws ClientException {
+		this.requireCurrentServer();
+		ClientDB.AccountDB acctDB = db.getAccountDB();
+		String key = this.assetKey();
+		Parser.Dict args;
+		if (forceserver) {
+			args = this.getAssetInternal(assetid, acctDB, key);
+		} else {
+			String msg = acctDB.get(key, assetid);
+			args = this.unpackServermsg(msg);
+		}
+		Parser.DictList reqs = (Parser.DictList)args.get(T.UNPACK_REQS_KEY);
+		args = (Parser.Dict)args.get(T.MSG);
+		String percent = null;
+		String issuer = null;
+		if (reqs.size() > 1) {
+			Parser.Dict req = (Parser.Dict)reqs.get(1);
+			Parser.Dict args1 = (Parser.Dict)this.matchServerReq(req,  T.ATSTORAGE).get(T.MSG);
+			issuer = args1.stringGet(T.CUSTOMER);
+			percent = args1.stringGet(T.PERCENT);
+		}
+		return new Asset(args.stringGet(T.CUSTOMER),
+				assetid,
+				args.stringGet(T.SCALE),
+				args.stringGet(T.PRECISION),
+				args.stringGet(T.ASSETNAME),
+				issuer,
+				percent);
+	}
+	
+	/**
+	 * Get an Asset from the local client database
+	 * @param assetid The ID of the asset
+	 * @return
+	 * @throws ClientException
+	 */
+	public Asset getAsset(String assetid) throws ClientException {
+		return getAsset(assetid, false);
+	}
+	
+	/**
+	 * Get an asset from the server, store it in the database, and return its parsed dictionary
+	 * @param assetid The ID of the asset to get
+	 * @param acctDB The account database
+	 * @param key The key to the asset directory in the account database
+	 * @return
+	 * @throws ClientException
+	 */
+	public Parser.Dict getAssetInternal(String assetid, ClientDB.AccountDB acctDB, String key) throws ClientException {
+		String req = this.getreq();
+		final String msg = this.sendmsg(new String[] {serverid, req, assetid});
+		Parser.Dict args;
+		boolean verifySigs = parser.getVerifySigs();
+		parser.setVerifySigs(true);
+		try {
+			args = this.unpackServermsg(msg, T.ATASSET);
+		} finally {
+			parser.setVerifySigs(verifySigs);
+		}
+		Parser.Dict msgargs = (Parser.Dict)args.get(T.MSG);
+		if (!(msgargs.stringGet(T.REQUEST).equals(T.ASSET) &&
+			  msgargs.stringGet(T.SERVERID).equals(serverid) &&
+			  msgargs.stringGet(T.ASSET).equals(assetid))) {
+			throw new ClientException("Server wrapped wrong object with @asset");
+		}
+		acctDB.put(key,  assetid, msg);
+		return args;
+	}
 /*
-(defun acct-compare (a1 a2)
-  (cond ((equal a1 a2) 0)
-        ((equal a1 $MAIN) -1)
-        ((equal a2 $MAIN) 1)
-        ((string-lessp a1 a2) -1)
-        (t 1)))
-  
-(defun acct-lessp (a1 a2)
-  (< (acct-compare a1 a2) 0))
-
-(defmethod getaccts ((client client))
-  "GET sub-account names.
-   Returns an error string or an array of the sub-account names."
-  (let ((db (db client)))
-
-    (require-current-server client "In getaccts(): Server not set")
-    (init-server-accts client)
-    
-    (sort (db-contents db (userbalancekey client)) #'acct-lessp)))
-
-(defstruct asset
-  id
-  assetid
-  scale
-  precision
-  name
-  issuer
-  percent)
-
-(defun asset-lessp (a1 a2)
-  (properties-lessp a1 a2 '(asset-name asset-id)))
-
-(defmethod getassets ((client client))
-  "Return the assets for which the customer has balances as
-   a list of ASSET instances."
-  (let ((db (db client))
-        (serverid (serverid client))
-        (res nil))
-    (when serverid
-      (let* ((key (userbalancekey client))
-             (accts (db-contents db key)))
-        (dolist (acct accts)
-          (let ((assetids (db-contents db key acct)))
-            (dolist (assetid assetids)
-              (unless (find assetid res
-                            :test #'equal
-                            :key #'asset-assetid)
-                (let ((asset (getasset client assetid)))
-                  (when asset (push asset res))))))))
-      (sort res #'asset-lessp))))
-
-(defmethod getasset ((client client) assetid &optional forceserver)
-  "Look up an asset.
-   Signals an error or returns an ASSET instance.
-   If the asset isn't found in the client database, looks it up on the
-   server, and stores it in the client database."
-  (require-current-server client "In getacct(): Server not set")
-  (let ((db (db client))
-        (key (assetkey client assetid)))
-    (with-db-lock (db key)
-      (let ((msg (unless forceserver (db-get db key)))
-            args)
-        (cond (msg
-               (setq args (unpack-servermsg client msg $ATASSET)))
-              (t
-               (setq args (getasset-internal client assetid key))))
-        (let ((req (cadr (getarg $UNPACK-REQS-KEY args)))
-              (args (getarg $MSG args))
-              (percent nil)
-              (issuer nil))
-          (when req
-            (let* ((args1 (getarg $MSG (match-serverreq client req $ATSTORAGE))))
-              (setq issuer (getarg $CUSTOMER args1)
-                    percent (getarg $PERCENT args1))))
-          (make-asset
-           :id (getarg $CUSTOMER args)
-           :assetid assetid
-           :scale (getarg $SCALE args)
-           :precision (getarg $PRECISION args)
-           :name (getarg $ASSETNAME args)
-           :issuer issuer
-           :percent percent))))))
-
-(defmethod getasset-internal ((client client) assetid key)
-  (let* ((db (db client))
-         (serverid (serverid client))
-         (req (getreq client))
-         (msg (sendmsg client $GETASSET serverid req assetid))
-         (args (with-verify-sigs-p ((parser client) t)
-                 (unpack-servermsg client msg $ATASSET)))
-         (msgargs (getarg $MSG args)))
-    (unless (and (equal (getarg $REQUEST msgargs) $ASSET)
-                 (equal (getarg $SERVERID msgargs) serverid)
-                 (equal (getarg $ASSET msgargs) assetid))
-      (error "Server wrapped wrong object with @asset"))
-    (setf (db-get db key) msg)
-    args))
-
 (defmethod addasset ((client client) scale precision assetname &optional percent)
   (let ((db (db client)))
     (with-db-lock (db (userreqkey client))
@@ -3557,7 +3655,17 @@ public class Client {
 		} catch (Exception e) {
 			throw new ClientException(e);
 		}
-		
+	}
+
+	/**
+	 * Unpack a server message that has already been parsed.
+	 * @param req The parsed server message
+	 * @param request if non-NULL, must match the T.REQUEST in message
+	 * @return The matched args
+	 * @throws ClientException
+	 */
+	public Parser.Dict matchServerReq(Parser.Dict req, String request) throws ClientException {
+		return this.matchServerReq(req, request, null);
 	}
 
 	/**
@@ -3590,9 +3698,16 @@ public class Client {
 	}
 
 */
+	public String serverKey(String prop) {
+		return serverid + '/' + prop;
+	}
 	
 	public String getServerProp(String prop, String serverid) {
 		return db.getServerDB().get(serverid, prop);
+	}
+	
+	public String assetKey() {
+		return this.serverKey(T.ASSET);
 	}
 	
 /*
@@ -3697,7 +3812,18 @@ public class Client {
 
 (defmethod user-last-transaction-key ((client client))
   (userserverkey client $LASTTRANSACTION))
-
+*/
+	
+	public String userBalanceKey(String acct) {
+		String key = this.userServerKey(T.BALANCE);
+		return (acct == null) ? key : key + '/' + acct;
+	}
+	
+	public String userBalanceKey() {
+		return this.userBalanceKey(null);
+	}
+	
+/*
 (defmethod userbalancekey ((client client)  &optional acct assetid)
   (let ((key (userserverkey client $BALANCE)))
     (cond (acct
@@ -3969,6 +4095,10 @@ public class Client {
 */
 	
 	public void forceinit() throws ClientException {
+		// TO DO
+	}
+	
+	public void initServerAccts() throws ClientException {
 		// TO DO
 	}
 	

@@ -36,6 +36,7 @@ public class LispList extends ArrayList<Object> {
 		 * @return
 		 */
 		public static Keyword intern(String namestring) {
+			namestring = namestring.toUpperCase();
 			Keyword res = keywordHash.get(namestring);
 			if (res != null) return res;
 			res = new Keyword(namestring);
