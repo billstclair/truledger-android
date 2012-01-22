@@ -1,0 +1,16 @@
+#!/bin/bash
+# Push the HEAD to the shared repository
+# assumes the following remotes:
+# git remote add truledger git+ssh://$HUBTL/usr/local/www/truledger/repos/truledger-android.git
+# git remote add origin git@github.com:billstclair/truledger-android.git
+
+# get the current branch, "git branch --contains" outputs "* branch"
+branch=`git branch --contains | fgrep '*'`
+branch=${branch:2}
+
+echo "Pushing branch: $branch"
+git push --tags origin $branch
+git push --tags truledger $branch
+
+# public access:
+# git remote add github git://github.com/billstclair/truledger.git
