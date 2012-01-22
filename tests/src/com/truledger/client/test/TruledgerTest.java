@@ -7,6 +7,7 @@ import java.util.Arrays;
 
 import android.test.ActivityInstrumentationTestCase2;
 
+import com.truledger.client.BCMath;
 import com.truledger.client.Client;
 import com.truledger.client.ClientDB;
 import com.truledger.client.Crypto;
@@ -424,6 +425,28 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     	assertEquals(list1.getprop(name), "Bill");
     	assertEquals(list2.getprop(id), "bar");
     	assertEquals(list2.getprop(name), "Joe");
+    }
+    
+    public void testBCMath() {
+    	BCMath bc = new BCMath(3);
+    	String res = bc.add("1.234", "5.67");
+    	assertEquals(res, "6.904");
+    	res = bc.add("1.2", "3.45", "6.789");
+    	assertEquals(res, "11.439");
+    	res = bc.add("3", "-0.123");
+    	assertEquals(res, "2.877");
+    	res = bc.subtract("9.876", "5.43");
+    	assertEquals(res, "4.446");
+    	res = bc.subtract("10", "1.234", "0.766");
+    	assertEquals(res, "8.000");
+    	res = bc.multiply("1.234", "5.67");
+    	assertEquals(res, "6.996");
+    	res = bc.multiply("2", "3.4", "-5.678");
+    	assertEquals(res, "-38.610");
+    	res = bc.divide("12", "-3.456");
+    	assertEquals(res, "-3.472");
+    	res = bc.pow("1.234", 10);
+    	assertEquals(res, "8.187");
     }
 }
 

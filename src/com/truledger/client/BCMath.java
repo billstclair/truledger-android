@@ -122,7 +122,7 @@ public class BCMath {
 	 * @param numbers
 	 * @return
 	 */
-	public static int maxNumberPrecision(String[] numbers) {
+	public static int maxNumberPrecision(String... numbers) {
 		int max = 0;
 		for (String number: numbers) max = Math.max(max, numberPrecision(number));
 		return max;
@@ -145,6 +145,15 @@ public class BCMath {
 			fractionCell[0] = (len > pos) ? "0." + number.substring(pos+1) : "0";
 		}
 		return number.substring(0, pos);
+	}
+	
+	/**
+	 * Return the integer part of a decimal number
+	 * @param number
+	 * @return
+	 */
+	public static String splitDecimal(String number) {
+		return splitDecimal(number, null);
 	}
 	
 	/**
@@ -196,19 +205,9 @@ public class BCMath {
 		String str;
 		if (diff > 0) str = zeroPad(raw, diff);
 		else if (diff < 0) str = raw.substring(0, raw.length() + diff);
-		else str = x;
+		else str = raw;
 		return new BigInteger(str);
 	}
-	
-	/**
-	 * 10 as a BigInteger
-	 */
-	public static final BigInteger ten = BigInteger.valueOf(10);
-	
-	/**
-	 * 0 as a BigInteger
-	 */
-	public static final BigInteger zero = BigInteger.valueOf(0);
 	
 	/**
 	 * Shift x by the current precision
@@ -217,7 +216,7 @@ public class BCMath {
 	 */
 	public BigInteger shiftPrecision(int x) {
 		BigInteger res = BigInteger.valueOf(x);
-		return res.multiply(ten.pow(this.precision));
+		return res.multiply(BigInteger.TEN.pow(this.precision));
 	}
 	
 	/**
@@ -260,12 +259,12 @@ public class BCMath {
 	 * @param numbers
 	 * @return
 	 */
-	public String add(String[] numbers) {
+	public String add(String... numbers) {
 		int len = numbers.length;
 		if (len == 0) this.unshiftPrecision("0");
 		BigInteger res = this.shiftPrecision(numbers[0]);
 		for (int i=1; i<len; i++) {
-			res.add(this.shiftPrecision(numbers[i]));
+			res = res.add(this.shiftPrecision(numbers[i]));
 		}
 		return this.unshiftPrecision(res);
 	}
@@ -276,7 +275,7 @@ public class BCMath {
 	 * @param y
 	 * @return
 	 */
-	public String substract(String x, String y) {
+	public String subtract(String x, String y) {
 		return this.unshiftPrecision(this.shiftPrecision(x).subtract(this.shiftPrecision(y)));
 	}
 	
@@ -285,12 +284,12 @@ public class BCMath {
 	 * @param numbers
 	 * @return
 	 */
-	public String subtract(String[] numbers) {
+	public String subtract(String... numbers) {
 		int len = numbers.length;
 		if (len == 0) this.unshiftPrecision("0");
 		BigInteger res = this.shiftPrecision(numbers[0]);
 		for (int i=1; i<len; i++) {
-			res.subtract(this.shiftPrecision(numbers[i]));
+			res = res.subtract(this.shiftPrecision(numbers[i]));
 		}
 		return this.unshiftPrecision(res);
 	}
@@ -304,7 +303,8 @@ public class BCMath {
 	public String multiply(String x, String  y) {
 		BigInteger res = this.shiftPrecision(x);
 		res = res.multiply(this.shiftPrecision(y));
-		return this.unshiftPrecision(this.unshiftPrecision(res));
+		String str = splitDecimal(this.unshiftPrecision(res));
+		return this.unshiftPrecision(str);
 	}
 	
 	/**
@@ -312,11 +312,11 @@ public class BCMath {
 	 * @param numbers
 	 * @return
 	 */
-	public String multiply(String[] numbers) {
+	public String multiply(String... numbers) {
 		int len = numbers.length;
 		if (len == 0) return this.add(numbers);
 		BigInteger res = this.shiftPrecision(numbers[0]);
-		BigInteger divisor = ten.pow(this.precision);
+		BigInteger divisor = BigInteger.TEN.pow(this.precision);
 		for (int i=1; i<len; i++) {
 			res = res.multiply(this.shiftPrecision(numbers[i]));
 			res = res.divide(divisor);
@@ -331,7 +331,7 @@ public class BCMath {
 	 * @return
 	 */
 	public String divide(String dividend, String divisor) {
-		BigInteger shifter = ten.pow(this.precision);
+		BigInteger shifter = BigInteger.TEN.pow(this.precision);
 		BigInteger res = this.shiftPrecision(dividend);
 		res = res.multiply(shifter).divide(this.shiftPrecision(divisor));
 		return this.unshiftPrecision(res);
@@ -339,7 +339,7 @@ public class BCMath {
 	
 	public int compare(String x, String y) {
 		BigInteger diff = this.shiftPrecision(x).subtract(this.shiftPrecision(y));
-		return diff.compareTo(zero);
+		return diff.compareTo(BigInteger.ZERO);
 	}
 	
 	/**
@@ -373,8 +373,8 @@ public class BCMath {
 	 * @return
 	 * @throws Exception
 	 */
-	public String pow(String num, int exp) throws Exception {
-		if (exp < 0) throw new Exception("Only positive integet exponents supported");
+	public String pow(String num, int exp) {
+		if (exp < 0) throw new IllegalArgumentException("Only positive integet exponents supported");
 		if (exp == 0) return "1";
 		BigInteger res = this.shiftPrecision(num).pow(exp);
 		int save = this.precision;
