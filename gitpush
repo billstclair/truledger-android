@@ -13,4 +13,4 @@ git push --tags origin $branch
 git push --tags truledger $branch
 
 # public access:
-# git remote add github git://github.com/billstclair/truledger.git
+# git remote add github git://github.com/billstclair/truledger-android.git

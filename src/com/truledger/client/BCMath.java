@@ -374,7 +374,7 @@ public class BCMath {
 	 * @throws Exception
 	 */
 	public String pow(String num, int exp) {
-		if (exp < 0) throw new IllegalArgumentException("Only positive integet exponents supported");
+		if (exp < 0) throw new IllegalArgumentException("Only positive integer exponents supported");
 		if (exp == 0) return "1";
 		BigInteger res = this.shiftPrecision(num).pow(exp);
 		int save = this.precision;

@@ -269,6 +269,76 @@ public class Utility {
 		  buf.append(chr);
 	  }
   }
+  
+  /** 
+   * "Return the id for an asset"
+   * @param id
+   * @param scale
+   * @param precision
+   * @param assetname
+   * @return
+   */
+  public static String assetid(String id, String scale, String precision, String assetname) {
+	  return Crypto.sha1(id + ',' + scale + ',' + precision + ',' + assetname);
+  }
+  
+  /**
+   * @param chr
+   * @return True if chr is lowercase or uppercase a to z or 0 to 9
+   */
+  public static boolean isAlphanumeric(char chr) {
+	  return ('0'<=chr && chr<='9') || ('a'<=chr && chr<='z') || ('A'<=chr && chr<='Z');
+  }
+  
+  /**
+   * @param chr
+   * @return true if chr isAlphanumeric() or a space
+   */
+  public static boolean isAlphanumericOrSpace(char chr) {
+	  return chr==' ' || isAlphanumeric(chr);
+  }
+  
+  /**
+   * @param str
+   * @param integerToo
+   * @return true if str is a numeric string. If integerToo is true, it must be an integer string
+   */
+  public static boolean isNumeric(String str, boolean integerToo) {
+	  boolean sawdot = integerToo;
+	  int len = str.length();
+	  for (int i=0; i<len; i++) {
+		  char chr = str.charAt(i);
+		  if (chr == '-') {
+			  if (i > 0) return false;
+		  } else if (chr == '.') {
+			  if (sawdot) return false;
+			  sawdot = true;
+		  } else {
+			  if ('0' > chr || chr > '9') return false;
+		  }
+	  }
+	  return true;
+  }
+  
+  /**
+   * @param str
+   * @return true if str is a numeric string
+   */
+  public static boolean isNumeric(String str) {
+	  return isNumeric(str, false);
+  }
+  
+  /**
+   * @param acct
+   * @return If acct is a valid account name string, i.e. every character isAlphanumeric()
+   */
+  public static boolean isAcctName(String acct) {
+	  int len = acct.length();
+	  for (int i=0; i<len; i++) {
+		  if (!isAlphanumeric(acct.charAt(i))) return false;
+	  }
+	  return true;
+  }
  
 }
 

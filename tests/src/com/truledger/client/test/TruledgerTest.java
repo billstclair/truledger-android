@@ -428,6 +428,7 @@ public class TruledgerTest extends ActivityInstrumentationTestCase2<TruledgerAct
     }
     
     public void testBCMath() {
+    	System.out.println("Brand: " + android.os.Build.BRAND + "\nModel: " + android.os.Build.MODEL + "\nManufacturer: " + android.os.Build.MANUFACTURER + "\nProduct: " + android.os.Build.PRODUCT + "\nDevice: " + android.os.Build.DEVICE + "\nHardware: " + android.os.Build.HARDWARE);
     	BCMath bc = new BCMath(3);
     	String res = bc.add("1.234", "5.67");
     	assertEquals(res, "6.904");

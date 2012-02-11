@@ -10,7 +10,6 @@ import java.security.KeyPair;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -66,6 +65,8 @@ public class Client {
 	// is created, invalidating the original T.REQ value.
 	// Called *msg* in the lisp code
 	String processMsg;
+	
+	BCMath bcm = new BCMath();
 	
 	/**
 	 * Constructor
@@ -623,7 +624,7 @@ public class Client {
 		Parser.Dict args;
 		if (check) {
 			try {
-				msg = this.sendmsg(new String[] {T.SERVERID, this.pubkeystr});
+				msg = this.sendmsg(T.SERVERID, this.pubkeystr);
 				args = parser.matchMessage(msg);
 			} catch (Exception e) {
 				this.clearServer();
@@ -695,19 +696,19 @@ public class Client {
 		
 		// See if server already knows us.
 		// Resist the urge to change this to a call to getPubkeyFromServer(). Trust me.
-		String msg = this.sendmsg(new String[] {T.ID, serverid, id});
+		String msg = this.sendmsg(T.ID, serverid, id);
 		Parser.Dict args;
 		try {
 			args = this.unpackServermsg(msg, T.REGISTER);
 		} catch (ClientException e) {
 			// Server doesn't know us. Register with server.
-			msg = this.custmsg(new String[] {T.REGISTER, serverid, pubkeystr, name});
+			msg = this.custmsg(T.REGISTER, serverid, pubkeystr, name);
 			if (coupon != null) {
 				String serverkey = db.getPubkeyDB().get(serverid);
 				if (serverkey == null) throw new ClientException("Can't get server public key");
 				try {
 					String couponCrypt = Crypto.RSAPubkeyEncrypt(coupon,  serverkey);
-					msg += '.' + this.custmsg(new String[] {T.COUPONENVELOPE, serverid, couponCrypt});
+					msg += '.' + this.custmsg(T.COUPONENVELOPE, serverid, couponCrypt);
 				} catch (IOException e2) {
 					throw new ClientException(e2);
 				}
@@ -1226,7 +1227,7 @@ public class Client {
 		String pubkeysig = acctDB.get(key, id);
 		boolean needstore = false;
 		if (pubkeysig == null) {
-			pubkeysig = this.sendmsg(new String[]{T.ID, serverid, id});
+			pubkeysig = this.sendmsg(T.ID, serverid, id);
 			needstore = true;
 		}
 		Parser.Dict args = this.unpackServermsg(pubkeysig, T.ATREGISTER);
@@ -1413,7 +1414,7 @@ public class Client {
 	 */
 	public Parser.Dict getAssetInternal(String assetid, ClientDB.AccountDB acctDB, String key) throws ClientException {
 		String req = this.getreq();
-		final String msg = this.sendmsg(new String[] {serverid, req, assetid});
+		final String msg = this.sendmsg(serverid, req, assetid);
 		Parser.Dict args;
 		boolean verifySigs = parser.getVerifySigs();
 		parser.setVerifySigs(true);
@@ -1431,65 +1432,69 @@ public class Client {
 		acctDB.put(key,  assetid, msg);
 		return args;
 	}
+	
+	public Asset addAsset(String scale, String precision, String assetname) throws ClientException {
+		return this.addAsset(scale, precision, assetname, null);
+	}
+	
+	public Asset addAsset(String scale, String precision, String assetname, String percent) throws ClientException {
+		this.requireCurrentServer();
+		String assetid = Utility.assetid(id, scale, precision, assetname);
+		String time = this.getTime();
+		Fee tranfee = this.getFees()[0];
+		String tokenid = tranfee.assetid;
+		String msg = this.custmsg(T.ASSET, serverid, assetid, scale, precision, assetname);
+		boolean nonserverp = !id.equals(serverid);
+		String bal1 = null;
+		if (nonserverp) {
+			Balance b1 = this.getBalance(tokenid);
+			if (b1 == null) throw new ClientException("No token balance");
+			bal1 = b1.amount;
+		}
+		Asset oldasset = null;
+		try {
+			oldasset = this.getAsset(assetid, true);
+		} catch (Exception e) {}
+		String bal2 = null;
+		HashMap<String, String> mainbals = new HashMap<String, String>();
+		HashMap<String, HashMap<String, String>> acctbals = new HashMap<String, HashMap<String, String>>();
+		acctbals.put(T.MAIN, mainbals);
+		String balancehash = null;
+		ClientDB.AccountDB accountDB = db.getAccountDB();
+		
+		if (oldasset!=null && (Utility.isBlank(percent) ?
+				Utility.isBlank(oldasset.percent) :
+					(id.equals(oldasset.issuer) && percent.equals(oldasset.percent)))) {
+			// Init unless we have a balance in this asset
+			boolean needinit = true;
+			for (String acct: accountDB.contents(this.userBalanceKey())) {
+				if (accountDB.get(this.userBalanceKey(acct), assetid) != null) {
+					needinit = false;
+					break;
+				}
+			}
+			if (needinit) this.forceinit();
+			return oldasset;
+		}
+		if (nonserverp) {
+			String tokens = oldasset!=null ? "1" : "2";
+			boolean ispos = bcm.compare(bal1, "0") >= 0;
+			bal1 = bcm.subtract(bal1, tokens);
+			if (ispos && bcm.compare(bal1, "0") < 0) {
+				throw new ClientException(oldasset==null ? "You need 2 usage tokens to create a new asset" :
+						"You need 1 usage token to update an asset");
+			}
+			bal1 = this.custmsg(T.BALANCE, serverid, time, tokenid, bal1);
+		}
+		if (oldasset == null) bal2 = this.custmsg(T.BALANCE, serverid, time, assetid, "-1");
+		if (bal1 != null) mainbals.put(tokenid, bal1);
+		if (bal2 != null) mainbals.put(assetid, bal2);
+		if (nonserverp) balancehash = this.balancehashmsg(time, acctbals);
+		
+		// TO DO
+		return null;
+	}
 /*
-(defmethod addasset ((client client) scale precision assetname &optional percent)
-  (let ((db (db client)))
-    (with-db-lock (db (userreqkey client))
-      (let ((id (id client))
-            (serverid (serverid client))
-            (server (server client))
-            (parser (parser client)))
-
-        (unless (and id serverid)
-          (error "Can't add asset unless server is set"))
-
-        (let* ((assetid (assetid id scale precision assetname))
-               (time (gettime client))
-               (tranfee (getfees client))
-               (tokenid (fee-assetid tranfee))
-               (msg (custmsg client $ASSET serverid assetid scale precision assetname))
-               (nonserverp (not (equal id serverid)))
-               (bal1 (and nonserverp
-                          (balance-amount (or (getbalance client $MAIN tokenid)
-                                              (error "No token balance")))))
-               (oldasset (ignore-errors (getasset client assetid t)))
-               (bal2 nil)
-               (storage nil)
-               (mainbals (make-equal-hash))
-               (acctbals (make-equal-hash $MAIN mainbals))
-               balancehash)
-          (cond ((and oldasset
-                      (if (blankp percent)
-                          (blankp (asset-percent oldasset))
-                          (and (equal id (asset-issuer oldasset))
-                               (equal percent (asset-percent oldasset)))))
-                 ;; check to be sure we've got a balance in this asset
-                 (let ((db (db client)))
-                   (unless (dolist (acct (db-contents db (userbalancekey client)))
-                             (when (db-get db (userbalancekey client acct assetid))
-                               (return t)))
-                     (forceinit client))))                   
-                (t
-                 (when nonserverp
-                   (let ((tokens (if oldasset 1 2))
-                         (ispos (>= (bccomp bal1 0) 0)))
-                     (setq bal1 (bcsub bal1 tokens))
-                     (when (and ispos (< (bccomp bal1 0) 0))
-                       (error
-                        (if oldasset
-                            "You need 1 usage token to update an asset"
-                            "You need 2 usage tokens to create a new asset"))))
-                   (setq bal1
-                         (custmsg client $BALANCE serverid time tokenid bal1)))
-                 (unless oldasset
-                   (setq bal2 (custmsg client $BALANCE serverid time assetid "-1")))
-                 (when bal1
-                   (setf (gethash tokenid mainbals) bal1))
-                 (when bal2
-                   (setf (gethash assetid mainbals) bal2))
-                 (when nonserverp
-                   (setq balancehash (balancehashmsg client time acctbals)))
-
                  (unless (blankp percent)
                    (unless (is-numeric-p percent)
                      (error "percent must be numeric"))
@@ -1531,17 +1536,93 @@ public class Client {
                            gotbal2))
             
                    (getasset client assetid t)))))))))
+*/
+	
+	public static class Fee {
+		String type;
+		String assetid;
+		String assetname;
+		String amount;
+		String formattedAmount;
+		public Fee() {
+		}
+		public Fee(String type, String assetid, String assetname, String amount, String formattedAmount) {
+			this.type = type;
+			this.assetid = assetid;
+			this.assetname = assetname;
+			this.amount = amount;
+			this.formattedAmount = formattedAmount;
+		}
+	}
+	
+	/**
+	 * Compare two fees on assetname and type
+	 * @param f1
+	 * @param f2
+	 * @return -1, 0, 1 according to f1 <, =, or > f2
+	 */
+	public static int feeCompare(Fee f1, Fee f2) {
+		int res = Utility.compareStrings(f1.assetname, f2.assetname);
+		if (res != 0) return res;
+		return Utility.compareStrings(f1.type, f2.type);
+	}
+	
+	/**
+	 * True if f1 < f2 according to assetCompare
+	 * @param f1
+	 * @param f2
+	 * @return
+	 */
+	public static boolean feeLessp(Fee f1, Fee f2) {
+		return feeCompare(f1, f2) < 0;
+	}
 
-(defstruct fee
-  type
-  assetid
-  assetname
-  amount
-  formatted-amount)
+	/**
+	 * Return the fees for the logged-in server.
+	 * @return At least two elements. First element is tranfee, second is regfee, rest are other fees
+	 */
+	public Fee[] getFees() throws ClientException {
+		return this.getFees(false);
+	}
+	
+	/**
+	 * Turn a fee message into a Fee instance
+	 * @param msg
+	 * @param type
+	 * @return
+	 * @throws ClientException
+	 */
+	public Fee decodeFee(String msg, String type) throws ClientException {
+		Parser.Dict args = this.unpackServermsg(msg, type);
+		String assetid = args.stringGet(T.ASSET);
+		Asset asset = this.getAsset(assetid);
+		String amount = args.stringGet(T.AMOUNT);
+		return new Fee(type.equals(T.FEE) ? args.stringGet(T.OPERATION) : type,
+				       assetid,
+				       asset.name,
+				       amount,
+				       formatAssetValue(amount, asset));
+	}
+	
+	/**
+	 * Return the fees for the logged-in server.
+	 * @param reload true to reload fees from server
+	 * @return At least two elements. First element is tranfee, second is regfee, rest are other fees
+	 */
+	public Fee[] getFees(boolean reload) throws ClientException {
+		this.requireCurrentServer();
+		String msg;
+		if (reload) msg = this.tranfee();
+		else msg = this.getFeesInternal();
+		// TO DO
+		return null;
+	}
+	
+	public String getFeesInternal() {
+		return null;
+	}
 
-(defun fee-lessp (fee1 fee2)
-  (properties-lessp fee1 fee2 '(fee-assetname fee-type)))
-
+/*
 (defmethod getfees ((client client) &optional reload)
   "Look up the transaction cost.
    Returns three values (FEE instances)
@@ -1702,7 +1783,49 @@ public class Client {
       ;; All is well, clear the database, and reload
       (setf (db-get (db client) (tranfeekey client)) nil)
       (getfees client t))))
-
+*/
+	
+	public static class Balance {
+		public String acct;
+		public String assetid;
+		public String assetname;
+		public String amount;
+		public String time;
+		public String formattedAmount;
+		public Balance() {}
+		public Balance(String acct, String assetid, String assetname, String amount, String time, String formattedAmount) {
+			this.acct = acct;
+			this.assetid = assetid;
+			this.amount = amount;
+			this.time = time;
+			this.formattedAmount = formattedAmount;
+		}
+	}
+	
+	public static boolean balanceLessp(Balance b1, Balance b2) {
+		int c = acctCompare(b1.acct, b2.acct);
+		if (c < 0) return true;
+		if (c > 0) return false;
+		return b1.assetname.compareTo(b2.assetname) < 0;
+	}
+	
+	/**
+	 * Get the balance for a particular assetid in a particular account
+	 * @param assetid The assetid
+	 * @param acct The acct, null means the default account: T.MAIN
+	 * @param rawreturn If non-null, store the raw balance message in rawreturn[0]
+	 * @return
+	 */
+	public Balance getBalance(String assetid, String acct, Balance[] rawreturn) throws ClientException {
+		// TO DO
+		return null;
+	}
+	
+	public Balance getBalance(String assetid) throws ClientException {
+		return this.getBalance(assetid, null, null);
+	}
+	
+/*
 (defstruct balance
   acct
   assetid
@@ -2490,7 +2613,7 @@ public class Client {
      (sort res (lambda (t1 t2) (< (bccomp t1 t2) 0)) :key #'inbox-time)
      msghash)))
 
-(defmethod sync-inbox ((client client))
+(defmethod sync-inbox ((client clie)nt))
   "Synchronize the current customer inbox with the current server.
    Assumes that there IS a current user and server.
    Does no database locking."
@@ -3129,7 +3252,7 @@ public class Client {
 		String msg;
 		try {
 			msg = anonymously ? parser.makemsg(new String[]{"0", T.READDATA, serverid, "0", key, sizearg}) + ":0" :
-			                    this.custmsg(new String[]{T.READDATA, serverid, this.getreq(), key, sizearg});
+			                    this.custmsg(T.READDATA, serverid, this.getreq(), key, sizearg);
 		} catch (Parser.ParseException e) {
 			throw new ClientException(e);
 		}
@@ -3553,7 +3676,7 @@ public class Client {
 	 * @return (<id>,args...):signature
 	 * @throws ClientException If the message doesn't match a known pattern
 	 */
-	public String custmsg(String[] args) throws ClientException {
+	public String custmsg(String... args) throws ClientException {
 		int len = args.length;
 		String[] args2 = new String[len+1];
 		args2[0] = this.id;
@@ -3574,7 +3697,7 @@ public class Client {
 	 * @return Servers response message
 	 * @throws ClientException If the args don't match a known pattern or there's an error communicating with the server. 
 	 */
-	public String sendmsg(String[] args) throws ClientException {
+	public String sendmsg(String... args) throws ClientException {
 		String msg = this.custmsg(args);
 		return server.process(msg);
 	}
@@ -3706,6 +3829,10 @@ public class Client {
 		return db.getServerDB().get(serverid, prop);
 	}
 	
+	public String getServerProp(String prop) {
+		return this.getServerProp(prop, this.serverid);
+	}
+	
 	public String assetKey() {
 		return this.serverKey(T.ASSET);
 	}
@@ -3719,7 +3846,13 @@ public class Client {
 
 (defmethod assetprop ((client client) assetid)
   (db-get (db client) (assetkey client assetid)))
-
+*/
+	
+	public String tranfee() {
+		return db.getAccountDB().get(this.getServerProp(T.TRANFEE));
+	}
+	
+/*
 (defmethod tranfeekey ((client client))
   (serverkey client $TRANFEE))
 
@@ -3909,7 +4042,33 @@ public class Client {
 
 (defmethod userversionkey ((client client))
   (userserverkey client $VERSION))
-
+*/
+	
+	public String formatAssetValue(String value, String assetid) throws ClientException {
+		return this.formatAssetValue(value, assetid, false);
+	}
+	
+	public String formatAssetValue(String value, String assetid, boolean incnegs) throws ClientException {
+		return this.formatAssetValue(value, this.getAsset(assetid), incnegs);
+	}
+	
+	public String formatAssetValue(String value, Asset asset) throws ClientException {
+		return this.formatAssetValue(value, asset, false);
+	}
+	
+	/**
+	 * Format an asset value by right-shifting it by the asset scale and truncating the fraction to the asset precision
+	 * @param value The value to format
+	 * @param asset the asset containing the scale and precision
+	 * @param incnegs If true, increment negative values by 1 before shifting
+	 * @return
+	 * @throws ClientException
+	 */
+	public String formatAssetValue(String value, Asset asset, boolean incnegs) throws ClientException {
+		return "";
+	}
+	
+/*
 (defmethod format-asset-value ((client client) value assetid &optional (incnegs t))
   "Format an asset value from the asset ID or $this->getasset($assetid)"
   (let ((asset (if (stringp assetid)
@@ -4027,7 +4186,14 @@ public class Client {
         (setf (db-get db key) req)))
     (with-db-lock (db key)
       (setf (db-get db key) (bcadd (db-get db key) 1)))))
-
+*/
+	
+	public String getTime() {
+		// TO DO
+		return null;
+	}
+	
+/*
 (defmethod gettime ((client client) &optional forcenew)
   "Get a timestamp from the server"
   (let ((db (db client))
@@ -4248,7 +4414,14 @@ public class Client {
 
 (defmethod unpacker ((client client))
   #'(lambda (msg) (unpack-servermsg client msg)))
-
+*/
+	
+	public String balancehashmsg(String time, HashMap<String, HashMap<String, String>> acctbals) {
+		// TO DO
+		return null;
+	}
+	
+/*
 (defmethod balancehashmsg ((client client) time acctbals &optional
                            two-phase-commit-p)
   (let* ((db (db client))

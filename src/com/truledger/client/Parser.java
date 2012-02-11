@@ -723,7 +723,7 @@ public class Parser {
 	 * @return A message string. Escapes all elements except the T.MSG element, which is assumed to already be escaped.
 	 * @throws ParseException If there's a null element, or the message doesn't match any of the known patterns.
 	 */
-	public String makemsg(String[] req) throws ParseException {
+	public String makemsg(String... req) throws ParseException {
 		int len = req.length;
 		Dict args = new Dict(len);
 		int size = 1;
@@ -753,7 +753,7 @@ public class Parser {
 		buf.append(')');
 		return buf.toString();
 	}
-	 
+	
 }
 
 //////////////////////////////////////////////////////////////////////
