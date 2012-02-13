@@ -1437,13 +1437,67 @@ public class Client {
 		return this.addAsset(scale, precision, assetname, null);
 	}
 	
+	/**
+	 * A HashMap that maps String keys to String values
+	 * @author billstclair
+	 */
+	public static class StringMap extends HashMap<String, String> {
+		private static final long serialVersionUID = -7751573715299890864L;
+
+		/**
+		 * Default constructor
+		 */
+		public StringMap() {
+			super();
+		}
+		
+		/**
+		 * Constructor that initializes with a list of keys and values
+		 * @param keysAndValues
+		 */
+		public StringMap(String... keysAndValues) {
+			super();
+			int len = keysAndValues.length;
+			for (int i=0; i<len; i++) {
+				this.put(keysAndValues[i], keysAndValues[i+1]);
+			}
+		}
+	}
+	
+	/**
+	 * A Hashmap that maps String keys to StringMap values
+	 * @author billstclair
+	 */
+	public static class StringMapMap extends HashMap<String, StringMap> {
+		private static final long serialVersionUID = 1249880246491576097L;
+		
+		/**
+		 * Default constructor
+		 */
+		public StringMapMap() {
+			super();
+		}
+		
+		/**
+		 * Constructor that initializes wiht a key/value pair
+		 * @param key
+		 * @param stringMap
+		 */
+		public StringMapMap(String key, StringMap value) {
+			super();
+			this.put(key,  value);
+		}
+	}
+	
 	public Asset addAsset(String scale, String precision, String assetname, String percent) throws ClientException {
 		this.requireCurrentServer();
 		String assetid = Utility.assetid(id, scale, precision, assetname);
 		String time = this.getTime();
 		Fee tranfee = this.getFees()[0];
 		String tokenid = tranfee.assetid;
+		String balancehash = null;
 		String msg = this.custmsg(T.ASSET, serverid, assetid, scale, precision, assetname);
+		String storage = null;
 		boolean nonserverp = !id.equals(serverid);
 		String bal1 = null;
 		if (nonserverp) {
@@ -1456,10 +1510,8 @@ public class Client {
 			oldasset = this.getAsset(assetid, true);
 		} catch (Exception e) {}
 		String bal2 = null;
-		HashMap<String, String> mainbals = new HashMap<String, String>();
-		HashMap<String, HashMap<String, String>> acctbals = new HashMap<String, HashMap<String, String>>();
-		acctbals.put(T.MAIN, mainbals);
-		String balancehash = null;
+		StringMap mainbals = new StringMap();
+		StringMapMap acctbals = new StringMapMap(T.MAIN, mainbals);
 		ClientDB.AccountDB accountDB = db.getAccountDB();
 		
 		if (oldasset!=null && (Utility.isBlank(percent) ?
@@ -1491,42 +1543,46 @@ public class Client {
 		if (bal2 != null) mainbals.put(assetid, bal2);
 		if (nonserverp) balancehash = this.balancehashmsg(time, acctbals);
 		
+		if (!Utility.isBlank(percent)) {
+			if (!Utility.isNumeric(percent)) throw new ClientException("Percent must be numeric");
+			storage = this.custmsg(T.STORAGE, serverid, time, assetid, percent);
+			msg += "." + storage;
+		}
+		if (bal1 != null) msg += "." + bal1;
+		if (bal2 != null) msg += "." + bal2;
+		if (balancehash != null) msg += "." + balancehash;
+		
+		msg = server.process(msg);
+
+		Parser.DictList reqs;
+		try {
+			reqs = parser.parse(msg);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		
+		String gotbal1 = null;
+		String gotbal2 = null;
+		String gotstorage = null;
+		for (Parser.Dict req: reqs) {
+			Parser.Dict args = this.matchServerReq(req);
+			String reqmsg = Parser.getParseMsg(req);
+			String m = Parser.getParseMsg((Parser.Dict)args.get(T.MSG)).trim();
+			if (m.equals(bal1)) gotbal1 = reqmsg;
+			if (m.equals(bal2)) gotbal2 = reqmsg;
+			if (m.equals(storage)) gotstorage = reqmsg; 
+		}
+		if ((bal1!=null && gotbal1==null) || (bal2!=null && gotbal2==null)) {
+			throw new ClientException("While adding asset: missing returned balance from server");
+		}
+		if (!Utility.isBlank(percent) && gotstorage==null) {
+			throw new ClientException("While adding asset: storage fee not returned from server");
+		}
+		
 		// TO DO
 		return null;
 	}
 /*
-                 (unless (blankp percent)
-                   (unless (is-numeric-p percent)
-                     (error "percent must be numeric"))
-                   (setq storage
-                         (custmsg client $STORAGE serverid time assetid percent))
-                   (dotcat msg "." storage))
-                 (when bal1 (dotcat msg "." bal1))
-                 (when bal2 (dotcat msg "." bal2))
-                 (when balancehash (dotcat msg "." balancehash))
-
-                 (setq msg (process server msg))
-
-                 ;; Request sent. Check for error
-                 (let ((reqs (parse parser msg))
-                       gotbal1
-                       gotbal2
-                       gotstorage)
-                   (dolist (req reqs)
-                     (let* ((args (match-serverreq client req))
-                            (msg (get-parsemsg req))
-                            (m (trim (get-parsemsg (getarg $MSG args)))))
-                       (cond ((equal m bal1) (setq gotbal1 msg))
-                             ((equal m bal2) (setq gotbal2 msg))
-                             ((equal m storage) (setq gotstorage msg)))))
-                   (when (or (and bal1 (not gotbal1))
-                             (and bal2 (not gotbal2)))
-                     (error
-                      "While adding asset: missing returned balance from server"))
-                   (when (and (not (blankp percent)) (not gotstorage))
-                     (error
-                      "While adding asset: storage fee not returned from server"))
-
                    ;; All is well. Commit the balance changes
                    (when bal1
                      (setf (db-get db (userbalancekey client $MAIN tokenid))
@@ -3790,6 +3846,10 @@ public class Client {
 	public Parser.Dict matchServerReq(Parser.Dict req, String request) throws ClientException {
 		return this.matchServerReq(req, request, null);
 	}
+	
+	public Parser.Dict matchServerReq(Parser.Dict req) throws ClientException {
+		return this.matchServerReq(req, null, null);
+	}
 
 	/**
 	 * Package up information about storage fees 
@@ -4416,7 +4476,7 @@ public class Client {
   #'(lambda (msg) (unpack-servermsg client msg)))
 */
 	
-	public String balancehashmsg(String time, HashMap<String, HashMap<String, String>> acctbals) {
+	public String balancehashmsg(String time, StringMapMap acctbals) {
 		// TO DO
 		return null;
 	}
