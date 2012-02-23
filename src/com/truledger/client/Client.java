@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.Hashtable;
 import java.util.List;
 import java.util.Set;
+import java.util.Vector;
 
 import org.apache.http.HttpResponse;
 import org.apache.http.NameValuePair;
@@ -1493,7 +1494,7 @@ public class Client {
 		this.requireCurrentServer();
 		String assetid = Utility.assetid(id, scale, precision, assetname);
 		String time = this.getTime();
-		Fee tranfee = this.getFees()[0];
+		Fee tranfee = this.getFees().tranfee;
 		String tokenid = tranfee.assetid;
 		String balancehash = null;
 		String msg = this.custmsg(T.ASSET, serverid, assetid, scale, precision, assetname);
@@ -1579,20 +1580,13 @@ public class Client {
 			throw new ClientException("While adding asset: storage fee not returned from server");
 		}
 		
-		// TO DO
-		return null;
+		// All is well. Commit the balance changes
+		String key = this.userBalanceKey(T.MAIN);
+		if (bal1 != null) accountDB.put(key, tokenid, gotbal1);
+		if (bal2 != null) accountDB.put(key, assetid, gotbal2);
+		
+		return this.getAsset(assetid, true);
 	}
-/*
-                   ;; All is well. Commit the balance changes
-                   (when bal1
-                     (setf (db-get db (userbalancekey client $MAIN tokenid))
-                           gotbal1))
-                   (when bal2
-                     (setf (db-get db (userbalancekey client $MAIN assetid))
-                           gotbal2))
-            
-                   (getasset client assetid t)))))))))
-*/
 	
 	public static class Fee {
 		String type;
@@ -1634,10 +1628,28 @@ public class Client {
 	}
 
 	/**
+	 * Package up the return values from getFees()
+	 * @author billstclair
+	 */
+	public static class Fees {
+		public Fee tranfee;
+		public Fee regfee;
+		public Fee[] others;
+		public Fees() {
+			super();
+		}
+		public Fees(Fee tranfee, Fee regfee, Fee[] others) {
+			this.tranfee = tranfee;
+			this.regfee = regfee;
+			this.others = others;
+		}
+	}
+	
+	/**
 	 * Return the fees for the logged-in server.
 	 * @return At least two elements. First element is tranfee, second is regfee, rest are other fees
 	 */
-	public Fee[] getFees() throws ClientException {
+	public Fees getFees() throws ClientException {
 		return this.getFees(false);
 	}
 	
@@ -1663,107 +1675,85 @@ public class Client {
 	/**
 	 * Return the fees for the logged-in server.
 	 * @param reload true to reload fees from server
-	 * @return At least two elements. First element is tranfee, second is regfee, rest are other fees
+	 * @return
 	 */
-	public Fee[] getFees(boolean reload) throws ClientException {
+	public Fees getFees(boolean reload) throws ClientException {
 		this.requireCurrentServer();
 		String msg;
 		if (reload) msg = this.tranfee();
 		else msg = this.getFeesInternal();
-		// TO DO
-		return null;
+		Fee tranfee = this.decodeFee(msg, T.TRANFEE);
+		msg = this.regfee();
+		Fee regfee = null;
+		if (!Utility.isBlank(msg)) regfee = this.decodeFee(msg, T.REGFEE);
+		Parser.DictList reqs;
+		try {
+			reqs = parser.parse(this.otherfees());
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		Fee[] others = new Fee[reqs.size()];
+		int i = 0;
+		for (Parser.Dict req: reqs) {
+			Parser.Dict args = this.matchServerReq(req);
+			String assetid = args.stringGet(T.ASSET);
+			Asset asset = this.getAsset(assetid, true);
+			String amount = args.stringGet(T.AMOUNT);
+			others[i++] = new Fee(args.stringGet(T.OPERATION),
+					assetid, asset.name, amount, this.formatAssetValue(amount, asset));
+		}
+
+		return new Fees(tranfee, regfee, others);
 	}
 	
-	public String getFeesInternal() {
-		return null;
+	private String getFeesInternal() throws ClientException {
+		String req = this.getreq();
+		String msg = this.sendmsg(T.GETFEES, serverid, req);
+		Parser.DictList reqs;
+		try {
+			reqs = parser.parse(msg, true);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		String tranmsg = null;
+		String regmsg = null;
+		StringMap feemap = new StringMap();
+		
+		for (Parser.Dict feereq: reqs) {
+			Parser.Dict args = this.matchServerReq(feereq);
+			String request = args.stringGet(T.REQUEST);
+			String feemsg = Parser.getParseMsg(feereq);
+			if (T.TRANFEE.equals(request)) tranmsg = feemsg;
+			else if (T.REGFEE.equals(request)) regmsg = feemsg;
+			else if (T.FEE.equals(request)) {
+				String operation = args.stringGet(T.OPERATION);
+				String fees = feemap.get(operation);
+				if (fees != null) fees += ".'" + feemsg;
+				else fees = feemsg;
+				feemap.put(operation, feemsg);
+			}
+		}
+		
+		if (tranmsg == null) throw new ClientException("No tranfee from getfees request");
+		ClientDB.ServerDB serverDB = db.getServerDB();
+		serverDB.put(serverid,  T.TRANFEE, tranmsg);
+		serverDB.put(serverid, T.REGFEE, regmsg);
+		String dir = serverid + '.' + T.FEE;
+		String[] operations = serverDB.contents(dir);
+		StringMap opmap = new StringMap();
+		for (String op: operations) opmap.put(op,  op);
+		Set<String> keys = feemap.keySet();
+		for (String key: keys) {
+			String value = feemap.get(key);
+			opmap.remove(key);
+			serverDB.put(dir,  key, value);
+		}
+		keys = opmap.keySet();
+		for (String op: keys) serverDB.put(dir,  op, null);
+		return tranmsg;
 	}
-
+	
 /*
-(defmethod getfees ((client client) &optional reload)
-  "Look up the transaction cost.
-   Returns three values (FEE instances)
-     1) tranfee
-     2) regfee
-     3) List of other fees"
-    (require-current-server client "In getfees(): Server not set")
-    (let ((msg (unless reload (tranfee client))))
-      (unless msg
-        (setq msg (getfees-internal client)))
-      (flet ((decode-fee (msg type)
-               (let* ((args (unpack-servermsg client msg type))
-                      (assetid (getarg $ASSET args))
-                      (asset (getasset client assetid))
-                      (amount (getarg $AMOUNT args)))
-                 (make-fee :type (if (equal type $FEE)
-                                     (getarg $OPERATION args)
-                                     type)
-                           :assetid assetid
-                           :assetname (asset-name asset)
-                           :amount amount
-                           :formatted-amount
-                           (format-asset-value client amount asset)))))
-        (let ((tranfee (decode-fee msg $TRANFEE))
-              (regfee (regfee client)))
-          (when regfee
-            (setf regfee (decode-fee regfee $REGFEE)))
-        (let ((reqs (parse (parser client) (other-fees client)))
-              (others nil))
-          (dolist (req reqs)
-            (let* ((args (match-serverreq client req $FEE))
-                   (assetid (getarg $ASSET args))
-                   (asset (getasset client assetid))
-                   (amount (getarg $AMOUNT args)))
-              (push (make-fee :type (getarg $OPERATION args)
-                              :assetid assetid
-                              :assetname (asset-name asset)
-                              :amount amount
-                              :formatted-amount
-                              (format-asset-value client amount asset))
-                    others)))
-          (dolist (fee others)
-            (let ((assetid (fee-assetid fee)))
-              (getasset client assetid t)))
-          (values tranfee regfee (sort others #'fee-lessp)))))))
-
-(defmethod getfees-internal ((client client))
-  (let ((db (db client))
-        (key (tranfeekey client))
-        (parser (parser client))
-        (serverid (serverid client)))
-    (with-db-lock (db key)
-      (let* ((req (getreq client))
-             (msg (sendmsg client $GETFEES serverid req))
-             (reqs (parse parser msg t))
-             (feemsg nil)
-             (regmsg nil)
-             (fee-alist nil))
-        (dolist (req reqs)
-          (let* ((args (match-serverreq client req))
-                 (request (getarg $REQUEST args)))
-            (cond ((equal request $TRANFEE)
-                   (setq feemsg (get-parsemsg req)))
-                  ((equal request $REGFEE)
-                   (setf regmsg  (get-parsemsg req)))
-                  ((equal request $FEE)
-                   (let* ((operation (getarg $OPERATION args))
-                          (cell (assocequal operation fee-alist))
-                          (msg (get-parsemsg req)))
-                     (if cell
-                         (dotcat (cdr cell) "." msg)
-                         (push (cons operation msg) fee-alist)))))))
-        (unless feemsg (error "No tranfee from getfees request"))
-        (setf (db-get db key) feemsg
-              (db-get db (regfee-key client)) regmsg)
-        (let* ((key (other-fees-key client))
-               (operations (db-contents db key)))
-          (dolist (cell fee-alist)
-            (let ((operation (car cell)))
-              (setf operations (delete operation operations :test #'equal)
-                    (db-get db key operation) (cdr cell))))
-          (dolist (operation operations)
-            (setf (db-get db key operation) nil)))
-        feemsg))))
-
 (defmethod setfees ((client client) &rest fees)
   "Set the server transaction fees.
    FEES is a list of FEE instances.
@@ -1848,7 +1838,9 @@ public class Client {
 		public String amount;
 		public String time;
 		public String formattedAmount;
-		public Balance() {}
+		public Balance() {
+			super();
+		}
 		public Balance(String acct, String assetid, String assetname, String amount, String time, String formattedAmount) {
 			this.acct = acct;
 			this.assetid = assetid;
@@ -1856,102 +1848,117 @@ public class Client {
 			this.time = time;
 			this.formattedAmount = formattedAmount;
 		}
+	
+		public int compareTo(Balance b) {
+			int c = acctCompare(this.acct, b.acct);
+			if (c != 0) return c;
+			return this.assetname.compareTo(b.assetname);
+		}
 	}
 	
-	public static boolean balanceLessp(Balance b1, Balance b2) {
-		int c = acctCompare(b1.acct, b2.acct);
-		if (c < 0) return true;
-		if (c > 0) return false;
-		return b1.assetname.compareTo(b2.assetname) < 0;
+	public static Comparator<Balance> balanceComparator = new Comparator<Balance>() {
+		public int compare(Balance b1, Balance b2) {
+			return b1.compareTo(b2);
+		}
+	};
+	
+	public static class BalanceMap extends HashMap<Balance, String> {
+		private static final long serialVersionUID = 5854035155868986274L;
+		public BalanceMap() {
+			super();
+		}
 	}
 	
 	/**
 	 * Get the balance for a particular assetid in a particular account
 	 * @param assetid The assetid
 	 * @param acct The acct, null means the default account: T.MAIN
-	 * @param rawreturn If non-null, store the raw balance message in rawreturn[0]
+	 * @param rawmap If non-null, store the raw balance message in rawmap.get(<balance>), where
+	 *        <balance> is the returned Balance instance.
 	 * @return
 	 */
-	public Balance getBalance(String assetid, String acct, Balance[] rawreturn) throws ClientException {
-		// TO DO
-		return null;
+	public Balance getBalance(String assetid, String acct, BalanceMap rawmap) throws ClientException {
+		this.initServerAccts();
+		return this.getBalanceInternal(assetid, acct, rawmap);
 	}
 	
+	protected Balance getBalanceInternal(String assetid, String acct, BalanceMap rawmap) throws ClientException {
+		if (acct == null) acct = T.MAIN;
+		String[] btr = this.userBalanceAndTime(acct, assetid);
+		if (btr == null) return null;
+		String amount = btr[0];
+		if (!Utility.isNumeric(amount, true)) {
+			throw new ClientException("Non-numeric balance amount: " + amount);
+		}
+		Asset asset = this.getAsset(assetid);
+		String formattedAmount = this.formatAssetValue(amount, asset);
+		String assetname = asset.name;
+		Balance res = new Balance(acct, assetid, assetname, amount, btr[1], formattedAmount);
+		if (rawmap != null) rawmap.put(res, btr[2]);
+		return res;
+	}
+	
+	/**
+	 * Returns the balance for assetid in the main acct.
+	 * @param assetid
+	 * @return
+	 * @throws ClientException
+	 */
 	public Balance getBalance(String assetid) throws ClientException {
 		return this.getBalance(assetid, null, null);
 	}
 	
+	/**
+	 * Return an array of arrays of Balance instances.
+	 * Each array of Balance instances is for one acct, in acct order, sorted by asset name.
+	 * @param assetids
+	 * @param accts null means [T.MAIN], zero-length means all accts
+	 * @param rawmap
+	 * @return
+	 * @throws ClientException
+	 */
+	public Balance[][] getBalances(String[] assetids, String[] accts, BalanceMap rawmap) throws ClientException {
+		ClientDB.AccountDB accountDB = db.getAccountDB();
+		String key = this.userBalanceKey();
+		if (accts == null) accts = new String[]{T.MAIN};
+		if (accts.length == 0) accts = accountDB.contents(key);
+		Vector<Balance[]> resv = new Vector<Balance[]>(accts.length);
+		for (String acct: accts) {
+			String[] ids = assetids;
+			if (ids == null) ids = accountDB.contents(key, acct);
+			if (ids == null) continue;
+			Vector<Balance> balsv = new Vector<Balance>(ids.length);
+			for (String id: ids) {
+				Balance bal = this.getBalanceInternal(id,  acct, rawmap);
+				if (bal != null) balsv.add(bal);
+			}
+			if (balsv.size() > 0) {
+				Balance[] bals = balsv.toArray(new Balance[balsv.size()]);
+				Arrays.sort(bals, balanceComparator);
+				resv.add(bals);
+			}
+		}
+		if (resv.size() == 0) return null;
+		return resv.toArray(new Balance[resv.size()][]);
+	}
+	
+	/**
+	 * Return all the balances for assetid for all accts
+	 * @param assetid
+	 * @return
+	 * @throws ClientException
+	 */
+	public Balance[] getBalances(String assetid) throws ClientException {
+		Balance[][] bals = this.getBalances(new String[]{assetid}, new String[0], null);
+		int len = bals.length;
+		Balance[] res = new Balance[len];
+		for (int i=0; i<len; i++) {
+			res[i] = bals[i][0];
+		}
+		return res;
+	}
+	
 /*
-(defstruct balance
-  acct
-  assetid
-  assetname
-  amount
-  time
-  formatted-amount)
-
-(defun balance-lessp (b1 b2)
-  (< (properties-compare b1 b2 '((balance-acct . acct-compare) balance-assetname))
-     0))
-
-(defmethod getbalance ((client client) &optional (acct t) assetid includeraw)
-  "Get user balances for all sub-accounts or just one.
-   Returns a list of (ACCT BALANCE ...) lists, where the
-   BALANCE instances are sorted by ASSETNAME and ASSETID.
-
-   The ACCT arg is T for all sub-accounts, nil for the
-   $MAIN sub-account only, or a string for that sub-account only.
-   The ASSETID arg is false for all assets or an ID for that asset only.
-
-   If you include a specific ACCT and a specific ASSETID, the result
-   is a single BALANCE instance, not a list of lists.
-
-   If INCLUDERAW is true, returns a second value, a hash table mapping
-   each BALANCE instance to the raw message that encodes it."
-  (require-current-server client "In getbalance(): Server not set")
-  (init-server-accts client)
-  (with-db-lock ((db client) (userreqkey client))
-    (getbalance-internal client acct assetid includeraw)))
-
-(defmethod getbalance-internal ((client client) acct assetid &optional includeraw)
-  (unless acct (setq acct $MAIN))
-  (let* ((db (db client))
-         (accts (if (stringp acct)
-                    (list acct)
-                    (db-contents db (userbalancekey client))))
-         (res nil)
-         (msghash (and includeraw (make-hash-table :test 'eq))))
-    (dolist (acct accts)
-      (let ((assetids (if assetid
-                          (list assetid)
-                          (db-contents db (userbalancekey client acct))))
-            (balances nil))
-        (dolist (assetid assetids)
-          (multiple-value-bind (amount time msg)
-              (userbalanceandtime client acct assetid)
-            (when amount
-              (unless (is-numeric-p amount t)
-                (error "While gathering balances, non-numeric amount: ~s" amount))
-              (let* ((asset (getasset client assetid))
-                     (formatted-amount (format-asset-value client amount asset))
-                     (assetname (asset-name asset)))
-                (push (make-balance :acct acct
-                                    :assetid assetid
-                                    :assetname assetname
-                                    :amount amount
-                                    :time time
-                                    :formatted-amount formatted-amount)
-                      balances)
-                (when includeraw
-                  (setf (gethash (car balances) msghash) msg))))))
-        (when balances
-          (push (cons acct (sort balances #'balance-lessp)) res))))
-    (values
-     (if (and (stringp acct) assetid)
-         (cadar res)
-         (sort res #'acct-lessp :key #'car))
-     msghash)))
-
 (defstruct fraction
   assetid
   assetname
@@ -3912,36 +3919,26 @@ public class Client {
 		return db.getAccountDB().get(this.getServerProp(T.TRANFEE));
 	}
 	
-/*
-(defmethod tranfeekey ((client client))
-  (serverkey client $TRANFEE))
-
-(defmethod tranfee ((client client))
-  (db-get (db client) (tranfeekey client)))
-
-(defmethod regfee-key ((client client))
-  (serverkey client $REGFEE))
-
-(defmethod regfee ((client client))
-  (db-get (db client) (regfee-key client)))
-
-(defmethod other-fees-key ((client client))
-  (serverkey client $FEE))
-
-(defmethod other-fees ((client client) &optional operation)
-  (let* ((db (db client))
-         (key (other-fees-key client))
-         (operations (if operation
-                        (list operation)
-                        (db-contents db key)))
-         (res nil))
-    (dolist (operation operations)
-      (let ((fees (db-get db key operation)))
-        (if res
-            (dotcat res "." fees)
-            (setf res fees))))
-    res))
-*/
+	public String regfee() {
+		return db.getAccountDB().get(this.getServerProp(T.TRANFEE));
+	}
+	
+	public String otherfees(String operation) {
+		ClientDB.ServerDB serverDB = db.getServerDB();
+		String[] operations = (operation!=null) ? new String[]{operation} : serverDB.contents(serverid, T.FEE);
+		String res = null;
+		String dir = serverid + '/' + T.FEE;
+		for (String op: operations) {
+			String fees = serverDB.get(dir, op);
+			if (res != null) res += "." + fees;
+			res = fees;
+		}
+		return res;
+	}
+	
+	public String otherfees() {
+		return this.otherfees(null);
+	}
 	
 	public String userServerKey(String prop, String serverid) {
 		return id + '/' + T.SERVER + '/' + serverid + (prop==null ? "" : '/' + prop);
@@ -4016,28 +4013,34 @@ public class Client {
 		return this.userBalanceKey(null);
 	}
 	
+	/**
+	 * Returns the raw balance for the given acct and assetid, null if no matching balance record
+	 * @param acct
+	 * @param assetid
+	 * @return
+	 */
+	public String userBalance(String acct, String assetid) throws ClientException {
+		String[] btm = this.userBalanceAndTime(acct, assetid);
+		if (btm == null) return null;
+		return btm[0];
+	}
+	
+	/**
+	 * Returns a 3-element array containing raw balance, time, and raw message
+	 * @param acct
+	 * @param assetid
+	 * @return
+	 */
+	public String[] userBalanceAndTime(String acct, String assetid) throws ClientException {
+		if (acct == null) acct = T.MAIN;
+		String msg = db.getAccountDB().get(this.userBalanceKey(acct), assetid);
+		if (msg == null) return null;
+		Parser.Dict args = this.unpackServermsg(msg);
+		args = (Parser.Dict)args.get(T.MSG);
+		return new String[]{args.stringGet(T.AMOUNT), args.stringGet(T.TIME), msg};
+	}
+	
 /*
-(defmethod userbalancekey ((client client)  &optional acct assetid)
-  (let ((key (userserverkey client $BALANCE)))
-    (cond (acct
-           (setq key (append-db-keys key acct))
-           (if assetid
-               (append-db-keys key assetid)
-               key))
-          (t key))))
-
-(defmethod userbalance ((client client) acct assetid)
-  (userbalanceandtime client acct assetid))
-
-(defmethod userbalanceandtime ((client client) acct assetid)
-  "Returns three values: the balance, time, and raw message"
-  (when (null acct) (setq acct $MAIN))
-  (let* ((msg (db-get (db client) (userbalancekey client acct assetid))))
-    (when msg
-      (let ((args (unpack-servermsg client msg $ATBALANCE)))
-        (setq args (getarg $MSG args))
-        (values (getarg $AMOUNT args) (getarg $TIME args) msg)))))
-
 (defmethod useroutboxkey ((client client) &optional time)
   (let ((key (userserverkey client $OUTBOX)))
     (if time
