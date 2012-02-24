@@ -1680,7 +1680,7 @@ public class Client {
 	public Fees getFees(boolean reload) throws ClientException {
 		this.requireCurrentServer();
 		String msg;
-		if (reload) msg = this.tranfee();
+		if (!reload) msg = this.tranfee();
 		else msg = this.getFeesInternal();
 		Fee tranfee = this.decodeFee(msg, T.TRANFEE);
 		msg = this.regfee();
@@ -1753,83 +1753,71 @@ public class Client {
 		return tranmsg;
 	}
 	
-/*
-(defmethod setfees ((client client) &rest fees)
-  "Set the server transaction fees.
-   FEES is a list of FEE instances.
-   If $TRANFEE or $REGFEE is omitted, the server defaults will be used.
-   The $TRANFEE & $REGFEE instances must use the tokenid as assetid.
-   An assetid of NIL will be interpreted as tokenid.
-   Refetches the fees from the server after setting them, and
-   returns the result of (getfees client t)."
-  (require-current-server client "In setfees(): Server not set")
-  (unless (equal (id client) (serverid client))
-    (error "Only the server can set fees"))
-  (with-db-lock ((db client) (userreqkey client))
-    (setfees-internal client fees)))
-
-(defun setfees-internal (client fees)
-  (let ((time (gettime client))
-        (serverid (serverid client))
-        (tokenid (fee-assetid (getfees client)))
-        (tranmsg nil)
-        (regmsg nil)
-        (others-msg nil)
-        (count 0))
-    (dolist (fee fees)
-      (incf count)
-      (let* ((type (fee-type fee))
-             (tranfeep (equal type $TRANFEE))
-             (regfeep (equal type $REGFEE))
-             (amount (fee-amount fee))
-             (assetid (or (fee-assetid fee) tokenid))
-             (asset (getasset client assetid)))
-        (when (null amount)
-          (let ((formatted-amount (fee-formatted-amount fee)))
-            (when formatted-amount
-              (setf amount
-                    (unformat-asset-value client formatted-amount asset)))))
-        (unless (and amount
-                     (ignore-errors
-                       (>= (parse-integer (as-string amount))
-                           (if (or tranfeep regfeep) 0 1))))
-          (error "Fee amount not a positive integer: ~s" amount))
-        (cond (tranfeep
-               (when tranmsg
-                 (error "Only one ~s allowed" $TRANFEE))
-               (unless (equal assetid tokenid)
-                 (error "~s must be in tokens" $TRANFEE))
-               (let ((msg (custmsg client $TRANFEE serverid time assetid amount)))
-                 (setf tranmsg msg)))
-              (regfeep
-               (when regmsg
-                 (error "Only one ~s allowed" $REGFEE))
-               (unless (equal assetid tokenid)
-                 (error "~s must be in tokens" $REGFEE))
-               (let ((msg (custmsg client $REGFEE serverid time assetid amount)))
-                 (setf regmsg msg)))
-              (t (let ((msg (custmsg client $FEE
-                                     serverid time type assetid amount)))
-                 (if others-msg
-                     (dotcat others-msg "." msg)
-                     (setf others-msg msg)))))))
-    (let* ((setfees-msg (custmsg client $SETFEES time count))
-           (msg setfees-msg))
-      (when tranmsg
-        (dotcat msg "." tranmsg))
-      (when regmsg
-        (dotcat msg "." regmsg))
-      (when others-msg
-        (dotcat msg "." others-msg))
-      ;; Here's where we send the message to the server
-      (let* ((servermsg (process (server client) msg))
-             (args (unpack-servermsg client servermsg $ATSETFEES serverid)))
-        (unless (equal setfees-msg (trim (get-parsemsg (getarg $MSG args))))
-          (error "Returned message wasn't sent")))
-      ;; All is well, clear the database, and reload
-      (setf (db-get (db client) (tranfeekey client)) nil)
-      (getfees client t))))
-*/
+	/**
+	 * Set the server transaction fees. If none of the Fee instances is of type
+	 * T.TRANFEE or T.REGFEE, the server defaults will be used for those fees.
+	 * The tranfee and regfee instances must use tokenid as assetid. null will
+	 * be interpreted as tokenid. 
+	 * @param fees
+	 * @return result of getfees(true) after setting the fees
+	 * @throws ClientException
+	 */
+	public Fees setFees(Fee... fees) throws ClientException {
+		this.requireCurrentServer();
+		if (!id.equals(serverid)) {
+			throw new ClientException("Only the server can set fees");
+		}
+		String time = this.getTime();
+		String tokenid = this.getFees().tranfee.assetid;
+		String tranmsg = null;
+		String regmsg = null;
+		String othersMsg = null;
+		int count = 0;
+		for (Fee fee: fees) {
+			count++;
+			String type = fee.type;
+			boolean isTranfee = type.equals(T.TRANFEE);
+			boolean isRegfee = type.equals(T.REGFEE);
+			String amount = fee.amount;
+			String assetid = fee.assetid;
+			if (assetid == null) assetid = tokenid;
+			Asset asset = this.getAsset(assetid);
+			if (amount == null) {
+				String formattedAmount = fee.formattedAmount;
+				if (formattedAmount != null) amount = this.unformatAssetValue(formattedAmount, asset);
+			}
+			if (amount==null || (Integer.parseInt(amount) < ((isTranfee||isRegfee) ? 0 : 1))) {
+				throw new ClientException("Fee amount not a positive integer: " + amount);
+			}
+			if (isTranfee) {
+				if (tranmsg != null) throw new ClientException("Only one tranfee allowed");
+				if (!assetid.equals(tokenid)) throw new ClientException("tranfee must be in tokens");
+				tranmsg = this.custmsg(T.TRANFEE, serverid, time, assetid, amount);
+			} else if (isRegfee) {
+				if (regmsg != null) throw new ClientException("Only one regfee allowed");
+				if (!assetid.equals(tokenid)) throw new ClientException("regfee must be in tokens");
+				regmsg = this.custmsg(T.REGFEE, serverid, time, assetid, amount);
+			} else {
+				String msg = this.custmsg(T.FEE, serverid, time, type, assetid, amount);
+				if (othersMsg == null) othersMsg = msg;
+				else othersMsg += "." + msg;
+			}
+		}
+		String setfeesmsg = this.custmsg(T.SETFEES, time, String.valueOf(count));
+		String msg = setfeesmsg;
+		if (tranmsg != null) msg += "." + tranmsg;
+		if (regmsg != null) msg += "." + regmsg;
+		if (othersMsg != null) msg += "." + othersMsg;
+		
+		String servermsg = server.process(msg);
+		Parser.Dict args = this.unpackServermsg(servermsg);
+		if (!setfeesmsg.equals(Parser.getParseMsg((Parser.Dict)args.get(T.MSG)))) {
+			throw new ClientException("Returned message wasn't sent");
+		}
+		// All is well. Clear the database and reload
+		db.getAccountDB().put(this.getServerProp(T.TRANFEE), null);
+		return this.getFees(true);
+	}
 	
 	public static class Balance {
 		public String acct;
@@ -4128,6 +4116,12 @@ public class Client {
 	 * @throws ClientException
 	 */
 	public String formatAssetValue(String value, Asset asset, boolean incnegs) throws ClientException {
+		// TO DO
+		return "";
+	}
+	
+	public String unformatAssetValue(String formattedValue, Asset asset) throws ClientException {
+		// TO DO
 		return "";
 	}
 	
