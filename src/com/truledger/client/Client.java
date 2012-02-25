@@ -2075,21 +2075,25 @@ public class Client {
 		return new BalanceAndFraction(time, assetid, asset.name, amount, formattedAmount, fraction);
 	}
 	
+	/**
+	 * Return storage fees for all assetids
+	 * @return
+	 * @throws ClientException
+	 */
+	public BalanceAndFraction[] getStorageFees() throws ClientException {
+		this.requireCurrentServer();
+		this.initServerAccts();
+		String key = this.userStorageFeeKey();
+		String[] assetids = db.getAccountDB().contents(key);
+		Vector<BalanceAndFraction> res = new Vector<BalanceAndFraction>();
+		for (String assetid: assetids) {
+			BalanceAndFraction baf = this.getStorageFee(assetid);
+			if (baf != null) res.add(baf);
+		}
+		return res.toArray(new BalanceAndFraction[res.size()]);
+	}
+	
 /*
-                (when (not (eql 0 (bccomp amount 0)))
-                  (let* ((asset (getasset client assetid))
-                         (formatted-amount (format-asset-value client amount asset))
-                         (assetname (asset-name asset)))
-                    (push (make-balance+fraction
-                           :time time
-                           :assetid assetid
-                           :assetname assetname
-                           :amount amount
-                           :formatted-amount formatted-amount
-                           :fraction fraction)
-                          res)))))))
-        (if assetid (car res) (sort res #'balance-lessp))))))
-
 (define-condition validation-error (simple-error)
   ())
 
