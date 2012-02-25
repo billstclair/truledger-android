@@ -1946,49 +1946,89 @@ public class Client {
 		return res;
 	}
 	
+	public static class Fraction {
+		public String assetid;
+		public String assetname;
+		public String amount;
+		public String scale;
+		public Fraction() {
+			super();
+		}
+		public Fraction(String assetid, String assetname, String amount, String scale) {
+			this.assetid = assetid;
+			this.assetname = assetname;
+			this.amount = amount;
+			this.scale = scale;
+		}
+	}
+	
+	/**
+	 * 
+	 * Return the Fraction record for the given assetid, or null if there is none
+	 * @param assetid
+	 * @return
+	 * @throws ClientException
+	 */
+	public Fraction getFraction(String assetid) throws ClientException {
+		return this.getFraction(assetid, null);
+	}
+	
+	/**
+	 * Return the Fraction record for the given assetid, or null if there is none
+	 * If rawmap is non-null, store the raw fraction message string in rawmap.get(assetid)
+	 * @param assetid
+	 * @param rawmap
+	 * @return
+	 */
+	public Fraction getFraction(String assetid, StringMap rawmap) throws ClientException {
+		this.requireCurrentServer();
+		this.initServerAccts();
+		return getFractionInternal(assetid, rawmap);
+	}
+	
+	protected Fraction getFractionInternal(String assetid, StringMap rawmap) throws ClientException {
+		String key = this.userFractionKey();
+		String msg = db.getAccountDB().get(key, assetid);
+		if (msg == null) return null;
+		Parser.Dict args = (Parser.Dict)this.unpackServermsg(msg, T.ATFRACTION).get(T.MSG);
+		String fraction = args.stringGet(T.AMOUNT);
+		Asset asset = this.getAsset(assetid);
+		String scale = asset.scale;
+		String assetname = asset.name;
+		Fraction res = new Fraction(assetid, assetname, fraction, scale);
+		if (rawmap != null) rawmap.put(assetid, msg);
+		return res;
+	}
+	
+	/**
+	 * Returns all the fractional balances
+	 * @return
+	 * @throws ClientException
+	 */
+	public Fraction[] getFractions() throws ClientException {
+		return this.getFractions(null);
+	}
+	
+	/**
+	 * Returns all the fractions balances. If rawmap is non-null, stores the raw message strings there,
+	 * indexed by their assetids.
+	 * @param rawmap
+	 * @return
+	 * @throws ClientException
+	 */
+	public Fraction[] getFractions(StringMap rawmap) throws ClientException {
+		this.requireCurrentServer();
+		this.initServerAccts();
+		String[] assetids = db.getAccountDB().contents(this.userFractionKey());
+		int len = assetids.length;
+		Fraction[] res = new Fraction[len];
+		for (int i=0; i<len; i++) {
+			res[i] = this.getFractionInternal(assetids[i], rawmap);
+		}
+		return res;
+	}
+	
 /*
-(defstruct fraction
-  assetid
-  assetname
-  amount
-  scale)
-
-(defmethod getfraction ((client client) &optional assetid includeraw)
-  "Get the fraction balance for a particular assetid, or all assetids,
-   Returns a list of FRACTION instances, or a single FRACTION instance,
-   if ASSETID is specified.
-   If INCLUDERAW is true, return, as a second value, a hash table mapping
-   from FRACTION instances to message strings."
-  (let ((db (db client)))
-    (require-current-server client "In getfraction(): Server not set")
-    (init-server-accts client)
-
-    (with-db-lock (db (userreqkey client))
-      (let ((assetids (if assetid
-                          (list assetid)
-                          (db-contents db (userfractionkey client))))
-            (res nil)
-            (msghash (and includeraw (make-hash-table :test 'eq))))
-        (dolist (assetid assetids)
-          (let* ((key (userfractionkey client assetid))
-                 (msg (db-get db key)))
-            (when msg
-              (let* ((args (getarg $MSG
-                                   (unpack-servermsg client msg $ATFRACTION)))
-                     (fraction (getarg $AMOUNT args))
-                     (asset (getasset client assetid))
-                     (scale (asset-scale asset))
-                     (assetname (asset-name asset)))
-                (push (make-fraction :assetid assetid
-                                     :assetname assetname
-                                     :amount fraction
-                                     :scale scale)
-                      res)
-                (when includeraw
-                  (setf (gethash (car res) msghash) msg))))))
-        (values
-         (if assetid (car res) (nreverse res))
-         msghash)))))
 
 (defstruct (balance+fraction (:include balance))
   fraction)
@@ -3972,25 +4012,13 @@ public class Client {
 		this.setUserReq(serverid, req);
 	}
 	
-/*
-(defmethod usertimekey ((client client))
-  (userserverkey client $TIME))
-
-(defmethod userfractionkey ((client client) &optional assetid)
-  (let ((key (userserverkey client $FRACTION)))
-    (if assetid
-        (append-db-keys key assetid)
-        key)))
-
-(defmethod userstoragefeekey ((client client) &optional assetid)
-  (let ((key (userserverkey client $STORAGEFEE)))
-    (if assetid
-        (append-db-keys key assetid)
-        key)))
-
-(defmethod user-last-transaction-key ((client client))
-  (userserverkey client $LASTTRANSACTION))
-*/
+	public String userFractionKey() {
+		return this.userServerKey(T.FRACTION);
+	}
+	
+	public String userStorageFeeKey() {
+		return this.userServerKey(T.STORAGEFEE);
+	}
 	
 	public String userBalanceKey(String acct) {
 		String key = this.userServerKey(T.BALANCE);
