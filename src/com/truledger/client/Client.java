@@ -2028,37 +2028,54 @@ public class Client {
 		return res;
 	}
 	
+	public static class BalanceAndFraction extends Balance {
+	  public String fraction;
+	  public BalanceAndFraction() {
+		  super();
+	  }
+	  public BalanceAndFraction (String time, String assetid, String assetname, String amount, String formattedAmount, String fraction) {
+		  this.time = time;
+		  this.assetid = assetid;
+		  this.assetname = assetname;
+		  this.amount = amount;
+		  this.formattedAmount = formattedAmount;
+		  this.fraction = fraction;
+	  }
+	}
+	
+	/**
+	 * Get the storagefee balance for a particular assetid.
+	 * Return null if there is no balance for that asset.
+	 * @param assetid
+	 * @throws ClientException
+	 */
+	public BalanceAndFraction getStorageFee(String assetid) throws ClientException {
+		this.requireCurrentServer();
+		this.initServerAccts();
+		return this.getStorageFeeInternal(assetid);
+	}
+	
+	public BalanceAndFraction getStorageFeeInternal(String assetid) throws ClientException {
+		String key = this.userStorageFeeKey();
+		String msg = db.getAccountDB().get(key, assetid);
+		if (msg == null) return null;
+		Parser.Dict args = this.unpackServermsg(msg, T.STORAGEFEE);
+		String time = args.stringGet(T.TIME);
+		if (!assetid.equals(args.stringGet(T.ASSET))) {
+			throw new ClientException ("Storage fee record has wrong assetid");
+		}
+		String amount = args.stringGet(T.AMOUNT);
+		String[] fractionBuf = new String[]{"0"};
+		Asset asset = this.getAsset(assetid);
+		String percent = asset.percent;
+		amount = Utility.normalizeBalance(amount,  fractionBuf, Utility.fractionDigits(percent));
+		String fraction = fractionBuf[0];
+		if (bcm.compare(amount,  "0") == 0) return null;
+		String formattedAmount = this.formatAssetValue(amount, asset);
+		return new BalanceAndFraction(time, assetid, asset.name, amount, formattedAmount, fraction);
+	}
+	
 /*
-
-(defstruct (balance+fraction (:include balance))
-  fraction)
-
-(defmethod getstoragefee ((client client) &optional assetid)
-  "Get the storagefee balance for a particular assetid, or all assetids,
-   Returns a list of BALANCE instances, or a single BALANCE instance, if
-   ASSETID is specified."
-  (let ((db (db client)))
-    (require-current-server client "In getfraction(): Server not set")
-    (init-server-accts client)
-
-    (with-db-lock (db (userreqkey client))
-      (let* ((key (userstoragefeekey client))
-             (assetids (if assetid
-                           (list assetid)
-                           (db-contents db key)))
-            (res nil))
-        (dolist (assetid assetids)
-          (let ((msg (db-get db key assetid)))
-            (when msg
-              (let* ((args (unpack-servermsg client msg $STORAGEFEE))
-                     (time (getarg $TIME args))
-                     (assetid (getarg $ASSET args))
-                     (amount (getarg $AMOUNT args))
-                     (fraction "0")
-                     (asset (getasset client assetid))
-                     (percent (asset-percent asset)))
-                (multiple-value-setq (amount fraction)
-                  (normalize-balance amount fraction (fraction-digits percent)))
                 (when (not (eql 0 (bccomp amount 0)))
                   (let* ((asset (getasset client assetid))
                          (formatted-amount (format-asset-value client amount asset))

@@ -339,6 +339,36 @@ public class Utility {
 	  }
 	  return true;
   }
+  
+  /**
+   * Add together balance and fractionBuf[0], to digits precision.
+   * Return the resulting balance. Store the fractional part in fractionBuf[0];
+   * @param balance
+   * @param fractionBuf
+   * @param digits
+   * @return
+   */
+  public static String normalizeBalance(String balance, String[] fractionBuf, int digits) {
+	  BCMath bcm = new BCMath(digits);
+	  return BCMath.splitDecimal(bcm.add(balance, fractionBuf[0]), fractionBuf);
+  }
+  
+  /**
+   * Return the number of digits to use to track fractional balances for an asset with a storage fee of percent
+   * @param percent
+   * @return
+   */
+  public static int fractionDigits(String percent) {
+	  return BCMath.numberPrecision(percent) + 8;
+  }
+  
+/*
+  (defun normalize-balance (balance fraction digits)
+		  "Add together BALANCE & FRACTION, to DIGITS precision.
+		   Return two values, the integer part and the fractional part."
+		  (wbp (digits)
+		    (split-decimal (bcadd balance fraction))))
+*/
  
 }
 
