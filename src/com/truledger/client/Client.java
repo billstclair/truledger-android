@@ -2093,61 +2093,100 @@ public class Client {
 		return res.toArray(new BalanceAndFraction[res.size()]);
 	}
 	
+	public static class ValidationError extends ClientException {
+		private static final long serialVersionUID = 2195331726119216616L;
+		public ValidationError(String message) {
+			super(message);
+		}
+		public ValidationError(Exception e) {
+			super(e);
+		}
+	}
+	
+	/**
+	 * Throw a ValidationError
+	 * @param message
+	 * @throws ValidationError
+	 */
+	public static void validationError(String message) throws ValidationError {
+		throw new ValidationError(message);
+	}
+	
+	public static class SpendFees {
+		public String transactionFee;
+		public String storageFee;
+		public SpendFees(String transactionFee, String storageFee) {
+			this.transactionFee = transactionFee;
+			this.storageFee = storageFee;
+		}
+	}
+	
+	/**
+	 * Initiate a spend.
+	 * @param toid The ID of the recipient of the spend. May be T.COUPON to generate a coupon.
+	 *             In that case, the coupon itself can be fetched with getCoupon()
+	 * @param assetid The id of the asset to spend
+	 * @param formattedAmount The formatted amount to spend
+	 * @param acct The source sub-account. null means T.MAIN.
+	 * @param note A note to attach to the spend. May be null. 
+	 * @param toacct The destination sub-account. If non-null, toid should be the logged in user id, and the
+	 *               spend will be a transfer from one sub-account to another.            
+	 * @return
+	 * @throws ClientException
+	 */
+	public SpendFees spend(String toid, String assetid, String formattedAmount, String acct, String note, String toacct)
+			throws ClientException {
+		this.requireCurrentServer();
+		this.initServerAccts();
+		try {
+			return this.spendInternal(toid, assetid, formattedAmount, acct, note, toacct);
+		} catch (ValidationError e) {
+			throw e;
+		} catch (ClientException e) {
+			this.reloadAsset(assetid);
+			this.forceinit();
+			return this.spendInternal(toid, assetid, formattedAmount, acct, note, toacct);
+		}
+	}
+	
+	/**
+	 * Send a commit message to the server and check and return the result;
+	 * @param time
+	 * @return
+	 * @throws ClientException
+	 */
+	public String sendCommitMsg(String time) throws ClientException {
+		String msg = this.custmsg(T.COMMIT, serverid, time);
+		String servermsg = server.process(msg);
+		Parser.DictList reqs;
+		try {
+			reqs = parser.parse(servermsg, true);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		Parser.Dict req = reqs.get(0);
+		Parser.Dict args;
+		try {
+			args = this.matchServerReq(req, T.ATCOMMIT);
+		} catch (ClientException e) {
+			args = this.matchServerReq(req);
+			String request = args.stringGet(T.REQUEST);
+			throw new ClientException("Spend commit request returned unknown message type: " + request);
+		}
+		if (!msg.equals(Parser.getParseMsg((Parser.Dict)args.get(T.MSG)))) {
+			throw new ClientException("Returned commit message doesn't match");
+		}
+		return msg;
+	}
+	
+	public SpendFees spendInternal(String toid, String assetid, String formattedAmount, String acct, String note, String toacct)
+			throws ClientException {
+		Asset asset = this.getAsset(assetid);
+		String amount = this.unformatAssetValue(formattedAmount, asset);
+		boolean useTwoPhaseCommit = !id.equals(serverid) && this.useTwoPhaseCommit();
+		
+	}
 /*
-(define-condition validation-error (simple-error)
-  ())
-
-(defun validation-error (format-control &rest format-arguments)
-  (error 'validation-error
-         :format-control format-control
-         :format-arguments format-arguments))
-
-(defmethod spend ((client client) toid assetid formattedamount &optional acct note)
-  "Initiate a spend
-   TOID is the id of the recipient of the spend
-     May be $COUPON to generate a coupon
-     In that case, the coupon itself can be fetched with getcoupon()
-   ASSETID is the id of the asset to spend.
-   FORMATTEDAMOUNT is the formatted amount to spend.
-   ACCT is the source sub-account, default $MAIN.
-   ACCT can also be a list: (FROMACCT TOACCT), for a transfer.
-   In that case TOID should be the logged in ID.
-   Fees are always taken from $MAIN.
-   Returns a plist of fees, both in ASSETID
-     (:storage-fee <storage> :transaction-fee <transaction>)"
-  (let ((db (db client)))
-    (require-current-server client "In spend(): Server not set")
-    (init-server-accts client)
-    (with-db-lock (db (userreqkey client))
-      (handler-bind
-          ((validation-error #'signal)
-           (error (lambda (c)
-                    (declare (ignore c))
-                    (reload-asset-p client assetid)
-                    (forceinit client)
-                    (return-from spend
-                      (spend-internal
-                       client toid assetid formattedamount acct note)))))
-        (spend-internal client toid assetid formattedamount acct note)))))
-
-(defmethod send-commit-msg ((client client) time)
-  (let* ((serverid (serverid client))
-         (server (server client))
-         (parser (parser client))
-         (msg (custmsg client $COMMIT serverid time))
-         (servermsg (process server msg))
-         (reqs (parse parser servermsg t))
-         (args (handler-case (match-serverreq client (car reqs) $ATCOMMIT)
-                 (error ()
-                   (let* ((args (match-serverreq client (car reqs)))
-                          (request (getarg $REQUEST args)))
-                     (error
-                      "Spend commit request returned unknown message type: ~s"
-                      request))))))
-    (unless (equal msg (trim (get-parsemsg (getarg $MSG args))))
-      (error "Returned commit message doesn't match"))
-    msg))
-
 (defmethod spend-internal ((client client) toid assetid formattedamount acct note)
   (let* ((db (db client))
          (id (id client))
@@ -2504,7 +2543,21 @@ public class Client {
         ,@(and storagefee (list :storage-fee
                                 (format-asset-value client storagefee asset)))))
     ))
-
+*/
+	
+	/**
+	 * Reload an asset from the server. Return true if the storage percent changed
+	 * @param assetid
+	 * @return
+	 */
+	public boolean reloadAsset(String assetid) throws ClientException {
+		Asset asset = this.getAsset(assetid);
+		String percent = asset.percent;
+		asset = this.getAsset(assetid, true);
+		return !percent.equals(asset.percent);
+	}
+	
+/*
 (defmethod reload-asset-p ((client client) assetid)
   "Reload an asset from the server.
    Return true if the storage percent changed."
@@ -3306,28 +3359,55 @@ public class Client {
          (msg (sendmsg client $COUPONENVELOPE serverid coupon)))
     (unpack-servermsg client msg $ATCOUPONENVELOPE))
   nil)
-
-(defmethod getfeatures ((client client) &optional forceserver)
-  "Returns a list of server features."
-  (let* ((db (db client))
-         (key (serverkey client $FEATURES)))
-    (require-current-server client "In getfeatures(): Server not set")
-    (with-db-lock (db (userreqkey client))
-      (let ((msg (unless forceserver (db-get db key))))
-        (unless msg
-          (setq msg (sendmsg client $GETFEATURES (serverid client) (getreq client))
-                forceserver t))
-        ;; the "getfeatures" command isn't supported by older servers,
-        ;; so ignore errors.
-        (let ((args (ignore-errors (unpack-servermsg client msg $FEATURES))))
-          (when forceserver (setf (db-get db key) msg))
-          (and args
-               (split-sequence:split-sequence #\| (getarg $FEATURES args))))))))
-
-(defmethod two-phase-commit-p ((client client))
-  "Return true if the current server for CLIENT supports two phase commit."
-  (not (null (member $TWOPHASECOMMIT (getfeatures client) :test #'equal))))
-
+*/
+	/**
+	 * Return an array of server features. Currently T.TWOPHASECOMMIT is the only feature.
+	 * @return
+	 * @throws ClientException
+	 */
+	String[] getFeatures() throws ClientException {
+		return this.getFeatures(false);
+	}
+	
+	/**
+	 * Return an array of server features. Currently T.TWOPHASECOMMIT is the only feature.
+	 * @param forceserver If true, ask the server first
+	 * @return
+	 * @throws ClientException
+	 */
+	String[] getFeatures(boolean forceserver) throws ClientException {
+		String msg = null;
+		ClientDB.ServerDB serverDB = db.getServerDB();
+		if (!forceserver) msg = serverDB.get(serverid, T.FEATURES);
+		if (msg == null) {
+			msg = this.sendmsg(T.GETFEATURES, serverid, this.getreq());
+			forceserver = true;
+		}
+		// the "getfeatures" command isn't supported by older servers, so ignore errors
+		Parser.Dict args = null;
+		try  {
+			args = this.unpackServermsg(msg, T.FEATURES);
+		} catch (ClientException e) {
+		}
+		if (forceserver) serverDB.put(serverid,  T.FEATURES);
+		if (args == null) return null;
+		return Utility.splitString('|', args.stringGet(T.FEATURES));
+	}
+	
+	/**
+	 * Return true if the server supports two phase commit
+	 * @return
+	 * @throws ClientException
+	 */
+	public boolean useTwoPhaseCommit() throws ClientException {
+		String[] features = this.getFeatures();
+		for (String feature: features) {
+			if (T.TWOPHASECOMMIT.equals(feature)) return true;
+		}
+		return false;
+	}
+	
+/*
 (defmethod getversion ((client client) &optional forceserver)
   "Returns two values: version & time."
   (let* ((db (db client))

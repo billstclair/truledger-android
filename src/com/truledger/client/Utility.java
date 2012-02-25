@@ -2,6 +2,7 @@ package com.truledger.client;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Vector;
 
 import org.spongycastle.util.encoders.Base64;
 
@@ -362,14 +363,25 @@ public class Utility {
 	  return BCMath.numberPrecision(percent) + 8;
   }
   
-/*
-  (defun normalize-balance (balance fraction digits)
-		  "Add together BALANCE & FRACTION, to DIGITS precision.
-		   Return two values, the integer part and the fractional part."
-		  (wbp (digits)
-		    (split-decimal (bcadd balance fraction))))
-*/
- 
+  /**
+   * Split string at delim
+   * @param delim
+   * @param string
+   * @return
+   */
+  public static String[] splitString(char delim, String string) {
+	  Vector<String> res = new Vector<String>();
+	  int len = string.length();
+	  int start = 0;
+	  for (int i=0; i<len; i++) {
+		  if (string.charAt(i) == delim) {
+			  res.add(string.substring(start, i));
+			  start = i+1;
+		  }
+	  }
+	  res.add(start==len ? "" : string.substring(start));
+	  return res.toArray(new String[res.size()]);
+  }
 }
 
 //////////////////////////////////////////////////////////////////////
