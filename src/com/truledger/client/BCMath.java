@@ -9,6 +9,11 @@ import java.math.BigInteger;
  */
 public class BCMath {
 	/**
+	 * A precision 0 instance for use by the static arithmetic methods
+	 */
+	public static BCMath bcm = null;
+	
+	/**
 	 * The number of digits after the decimal point
 	 */
 	public int precision = 0;
@@ -25,6 +30,15 @@ public class BCMath {
 	 */
 	public BCMath(int precision) {
 		this.precision = precision;
+	}
+	
+	/**
+	 * Return a pre-allocated BCMath instance with a precision of 0
+	 * @return
+	 */
+	public static BCMath bcm() {
+		if (bcm == null) bcm = new BCMath();
+		return bcm;
 	}
 
 	/**
@@ -255,6 +269,16 @@ public class BCMath {
 	}
 	
 	/**
+	 * bcm().add(x, y)
+	 * @param x
+	 * @param y
+	 * @return
+	 */
+	public static String sAdd(String x, String y) {
+		return bcm().add(x, y);
+	}
+	
+	/**
 	 * Add a bunch of numbers, preserving precision
 	 * @param numbers
 	 * @return
@@ -268,6 +292,15 @@ public class BCMath {
 		}
 		return this.unshiftPrecision(res);
 	}
+	
+	/**
+	 * bcm().add(numbers)
+	 * @param numbers
+	 * @return
+	 */
+	public static String sAdd(String... numbers) {
+		return bcm().add(numbers);
+	}
 
 	/**
 	 * Subtract y from x, preserving precision
@@ -277,6 +310,16 @@ public class BCMath {
 	 */
 	public String subtract(String x, String y) {
 		return this.unshiftPrecision(this.shiftPrecision(x).subtract(this.shiftPrecision(y)));
+	}
+	
+	/**
+	 * bcm().subtract(x, y)
+	 * @param x
+	 * @param y
+	 * @return
+	 */
+	public static String sSubtract(String x, String y) {
+		return bcm().subtract(x, y);
 	}
 	
 	/**
@@ -295,6 +338,15 @@ public class BCMath {
 	}
 	
 	/**
+	 * bcm().subtract(numbers)
+	 * @param numbers
+	 * @return
+	 */
+	public static String sSubtract(String... numbers) {
+		return bcm().subtract(numbers);
+	}
+	
+	/**
 	 * Multiple two numbers, preserving precision
 	 * @param x
 	 * @param y
@@ -305,6 +357,16 @@ public class BCMath {
 		res = res.multiply(this.shiftPrecision(y));
 		String str = splitDecimal(this.unshiftPrecision(res));
 		return this.unshiftPrecision(str);
+	}
+	
+	/**
+	 * bcm().multiply(x, y)
+	 * @param x
+	 * @param y
+	 * @return
+	 */
+	public static String sMultiply(String x, String y) {
+		return bcm().multiply(x, y);
 	}
 	
 	/**
@@ -325,6 +387,15 @@ public class BCMath {
 	}
 	
 	/**
+	 * bcm().multiply(numbers)
+	 * @param numbers
+	 * @return
+	 */
+	public static String sMultiply(String... numbers) {
+		return bcm().multiply(numbers);
+	}
+	
+	/**
 	 * Return dividend/divisor, preserving precision
 	 * @param dividend
 	 * @param divisor
@@ -337,9 +408,29 @@ public class BCMath {
 		return this.unshiftPrecision(res);
 	}
 	
+	/**
+	 * bcm().divide(dividend, divisor)
+	 * @param dividend
+	 * @param divisor
+	 * @return
+	 */
+	public static String sDivide(String dividend, String divisor) {
+		return bcm().divide(dividend, divisor);
+	}
+	
 	public int compare(String x, String y) {
 		BigInteger diff = this.shiftPrecision(x).subtract(this.shiftPrecision(y));
 		return diff.compareTo(BigInteger.ZERO);
+	}
+	
+	/**
+	 * bcm().compare(x, y)
+	 * @param x
+	 * @param y
+	 * @return
+	 */
+	public static int sCompare(String x, String y) {
+		return bcm().compare(x, y);
 	}
 	
 	/**
@@ -350,6 +441,16 @@ public class BCMath {
 	 */
 	public boolean equals(String x, String y) {
 		return this.compare(x, y) == 0;
+	}
+	
+	/**
+	 * bcm().equals(x, y)
+	 * @param x
+	 * @param y
+	 * @return
+	 */
+	public static boolean sEquals(String x, String y) {
+		return bcm().equals(x, y);
 	}
 
 	/**
@@ -386,6 +487,16 @@ public class BCMath {
 			this.precision = save;
 		}
 		return this.unshiftPrecision(res);
+	}
+	
+	/**
+	 * bcm().pow(num, exp)
+	 * @param num
+	 * @param exp
+	 * @return
+	 */
+	public static String sPow(String num, int exp) {
+		return bcm().pow(num,  exp);
 	}
 }
 

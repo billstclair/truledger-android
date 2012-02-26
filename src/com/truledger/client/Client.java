@@ -2181,199 +2181,185 @@ public class Client {
 	
 	public SpendFees spendInternal(String toid, String assetid, String formattedAmount, String acct, String note, String toacct)
 			throws ClientException {
+		if (toid==null || assetid==null || formattedAmount==null) {
+			validationError("toid, acct, assetid, and formattedAmount must all be non-null");
+		}
+		if (acct == null) acct = T.MAIN;
+		if (toacct == null) toacct = T.MAIN;
+		
 		Asset asset = this.getAsset(assetid);
 		String amount = this.unformatAssetValue(formattedAmount, asset);
 		boolean useTwoPhaseCommit = !id.equals(serverid) && this.useTwoPhaseCommit();
+		String lastTransaction = null;
+		String oldamount, oldtime;
+		String storagefee = "0";
+		int digits = 0;
+		BCMath pctbcm = null;
+		String percent = null;
+		String fraction = "0";
+		String fractime, fracfee;
+		String baseoldamount = "0";
+		String newamount;
+		String newtoamount = null;
+		String oldtoamount = null;
+		Fee tranfee = null;
+		String tranfeeAsset;
+		String tranfeeAmt = null;
+		String feeBalance;
+		boolean needFeeBalance = false;
+		String operation = null;
+		Fees fees = null;
+		String[] buf = new String[1];
+		StringMap feeAmounts = new StringMap();
+
+		if (id.equals(toid) && acct.equals(toacct)) validationError("Transfer from and to the same acct");
+		if (serverid.equals(toid)) validationError("Spends to the server are not allowed.");
+		
+		// Must get time before accessing balances, since getTime() may forceinit();
+		String time = this.getTime();
+		
+		if (bcm.compare(amount, "0") < 0) {
+			String bal = this.userBalance(acct,  assetid);
+			if (bcm.compare(bal, amount) != 0) validationError("Negative spends must be for the whole issuer balance");
+		}
+		
+		String[] bt = this.userBalanceAndTime(acct, assetid);
+		oldamount = bt[0];
+		oldtime = bt[1];
+		if (oldamount == null) oldamount = "0";
+		else {
+			if (!Utility.isNumeric(oldamount, true)) {
+				validationError("Error getting balance for asset in acct " + acct + ": " + oldamount);
+			}
+			StorageInfo info = this.getClientStorageInfo(assetid);
+			percent = info.percent;
+			fraction = info.fraction;
+			fractime = info.fractime;
+			if (percent != null) {
+				digits = Utility.fractionDigits(percent);
+				pctbcm = new BCMath(digits);
+				buf[0] = fraction;
+				fracfee = Utility.storageFee(buf, fractime, time, percent, digits);
+				fraction = buf[0];
+				buf[0] = oldamount;
+				storagefee = Utility.storageFee(buf,  oldtime, time, percent, digits);
+				oldamount = buf[0];
+				storagefee = pctbcm.add(storagefee, fracfee);
+				baseoldamount = oldamount;
+				buf[0] = fraction;
+				oldamount = Utility.normalizeBalance(oldamount, buf, digits);
+				fraction = buf[0];
+			}
+		}
+		
+		newamount = bcm.subtract(oldamount, amount);
+		if (bcm.compare(oldamount, "0")>=0 && bcm.compare(newamount, "0")<0) {
+			if (id.equals(toid) && percent!=null && bcm.compare(amount, baseoldamount) <= 0) {
+				// User asked to transfer less than the whole amount, but the storage fee put it over.
+				// Reduce amount to leave 0 in acct
+				amount = oldamount;
+				newamount = "0";
+			}
+		} else {
+			validationError("Insufficient balance");
+		}
+		
+		if (id.equals(toid)) {
+			String totime, tofee;
+			bt = this.userBalanceAndTime(toacct, assetid);
+			oldtoamount = bt[0];
+			totime = bt[1];
+			if (percent!=null && oldtoamount!=null) {
+				buf[0] = oldtoamount;
+				tofee = Utility.storageFee(buf,  totime, time, percent, digits);
+				oldtoamount = buf[0];
+				storagefee = pctbcm.add(storagefee, tofee);
+			}
+			newtoamount = bcm.add(oldtoamount==null ? "0" : oldtoamount, amount);
+			if (percent != null) {
+				buf[0] = fraction;
+				newtoamount = Utility.normalizeBalance(newtoamount, buf, digits);
+				fraction = buf[0];
+			}
+			if (oldtoamount!=null && bcm.compare(oldtoamount, "0")<0 && bcm.compare(newtoamount, "0")>=0) {
+				// This shouldn't happen
+				validationError("asset out of balance on self-spend");
+			}
+		}
+		
+		if (!id.equals(serverid)) {
+			fees = this.getFees();
+			tranfee = fees.tranfee;
+			tranfeeAsset = tranfee.assetid;
+			operation = id.equals(toid) ? T.TRANSFER : T.SPEND;
+			Vector<Fee> otherFees = new Vector<Fee>();
+			for (Fee fee: fees.others) {
+				if (!operation.equals(fee.type)) continue;
+				if (!assetid.equals(fee.assetid)) continue;
+				String issuer = asset.issuer;
+				if (issuer == null) issuer = asset.id;
+				if (id.equals(issuer)) continue;
+				otherFees.add(fee);
+			}
+			tranfeeAmt = id.equals(toid) ? (oldtoamount!=null ? "0" : "1") : tranfee.amount;
+			if (tranfeeAsset.equals(assetid) && acct.equals(T.MAIN)) {
+				newamount = bcm.subtract(newamount, tranfeeAmt);
+				for (Fee fee: otherFees) {
+					String feeamt = fee.amount;
+					newamount = bcm.subtract(newamount, feeamt);
+					feeAmounts.put(assetid, feeamt);
+				}
+				if (bcm.compare(oldamount, "0")>=0 && bcm.compare(newamount, "0")<0) {
+					validationError("Insufficient balance for transaction fees");
+				}
+			} else if (id.equals(toid) && tranfeeAsset.equals(assetid) && toacct.equals(T.MAIN)) {
+				newtoamount = bcm.subtract(newtoamount, tranfeeAmt);
+				for (Fee fee: otherFees) {
+					String feeamt = fee.amount;
+					newtoamount = bcm.subtract(newtoamount, feeamt);
+					feeAmounts.put(assetid,  feeamt);
+				}
+				if (bcm.compare(newtoamount, oldtoamount) == 0) {
+					validationError("Transferring transaction fee to a new acct is silly");
+				}
+				if (bcm.compare(oldtoamount, "0")>=0 && bcm.compare(newtoamount, "0")<0) {
+					validationError("Insufficient balance for transaction fee");
+				}
+			} else {
+				String oldFeeBalance = this.userBalance(T.MAIN, tranfeeAsset);
+				String feeamt = "0";
+				for (Fee fee: otherFees) {
+					feeamt = bcm.add(feeamt, fee.amount);
+				}
+				feeAmounts.put(tranfeeAsset, feeamt);
+				if (!BCMath.isZero(tranfeeAmt) || !BCMath.isZero(feeamt)) {
+					feeBalance = bcm.subtract(oldFeeBalance, tranfeeAmt, feeamt);
+					needFeeBalance = true;
+					if (bcm.compare(oldFeeBalance, "0")>=0 && bcm.compare(feeBalance, "0")<0) {
+						validationError("Insufficient tokens for transaction fee");
+					}	
+				}
+			}
+			// Compute non-refundable fee amounts for other than the token asset
+			if (!assetid.equals(tranfeeAsset)) {
+				for (Fee fee: otherFees) {
+					String feeamt = fee.amount;
+					if (bcm.compare(newamount, feeamt) > 0) {
+						newamount = bcm.subtract(newamount, feeamt);
+					} else if (id.equals(toid) && bcm.compare(newtoamount, feeamt)>0) {
+						newtoamount = bcm.subtract(newtoamount, feeamt);
+					} else {
+						validationError("Insufficient balance for nonrefundable fee");
+					}
+					feeAmounts.put(assetid, feeamt);
+				}
+			}
+		}
+		
+		// Numbers are computed and validated. Create message for the server
 		
 	}
 /*
-(defmethod spend-internal ((client client) toid assetid formattedamount acct note)
-  (let* ((db (db client))
-         (id (id client))
-         (serverid (serverid client))
-         (server (server client))
-         (parser (parser client))
-         (toacct (or (and (listp acct) (cadr acct)) $MAIN))
-         (acct (or (if (listp acct) (car acct) acct) $MAIN))
-         (asset (getasset client assetid))
-         (amount (unformat-asset-value client formattedamount asset))
-         (two-phase-commit-p (and (not (equal id serverid))
-                                  (two-phase-commit-p client)))
-         (last-transaction nil)
-         oldamount
-         oldtime
-         time
-         (storagefee 0)
-         (digits 0)
-         percent
-         fraction
-         fractime
-         fracfee
-         baseoldamount
-         newamount
-         oldtoamount
-         newtoamount
-         (tranfee nil)
-         tranfee-asset
-         (tranfee-amt nil)
-         fee-balance
-         (need-fee-balance-p nil)
-         (operation nil)
-         (fees nil)
-         (fees-amounts nil)      ;alist of (assetid . amount) pairs
-         )
-    (declare (ignorable fees))          ;temporary
-
-    (assert (and (stringp acct) (stringp toacct)))
-
-    (when (and (equal id toid) (equal acct toacct))
-      (validation-error "Transfer from and to the same acct (~s). Nothing to do."
-             acct))
-
-    (when (equal toid serverid)
-      (validation-error "Spends to the server are not allowed."))
-
-    ;; Must get time before accessing balances since GETTIME may FORCEINIT.
-    (setq time (gettime client))
-
-    (when (< (bccomp amount 0) 0)
-      (let ((bal (userbalance client acct assetid)))
-        (unless (eql 0 (bccomp bal amount))
-          (validation-error
-           "Negative spends must be for the whole issuer balance"))))
-
-    (multiple-value-setq (oldamount oldtime)
-      (userbalanceandtime client acct assetid))
-    (cond (oldamount
-           (unless (is-numeric-p oldamount t)
-             (validation-error
-              "Error getting balance for asset in acct ~s: ~s" acct oldamount))
-
-           (multiple-value-setq (percent fraction fractime)
-             (client-storage-info client assetid))
-           (when percent
-             (setq digits (fraction-digits percent))
-             (multiple-value-setq (fracfee fraction)
-               (storage-fee fraction fractime time percent digits))
-             (multiple-value-setq (storagefee oldamount)
-               (storage-fee oldamount oldtime time percent digits))
-             (wbp (digits)
-               (setq storagefee (bcadd storagefee fracfee)
-                     baseoldamount oldamount))
-             (multiple-value-setq (oldamount fraction)
-               (normalize-balance oldamount fraction digits))))
-          (t (setq oldamount "0")))
-
-    (setq newamount (bcsub oldamount amount))
-    (when (and (>= (bccomp oldamount 0) 0)
-               (< (bccomp newamount 0) 0))
-      (cond ((and (equal id toid)
-                  percent
-                  (<= (bccomp amount baseoldamount) 0))
-             ;; User asked to transfer less than the whole amount, but the
-             ;; storage fee put it over. Reduce amount to leave 0 in ACCT
-             (setq amount oldamount
-                   newamount 0))
-            (t (validation-error "Insufficient balance"))))
-
-    (when (equal id toid)
-      (let (totime tofee)
-        (multiple-value-setq (oldtoamount totime)
-          (userbalanceandtime client toacct assetid))
-        (when (and percent oldtoamount)
-          (multiple-value-setq (tofee oldtoamount)
-            (storage-fee oldtoamount totime time percent digits))
-          (wbp (digits)
-            (setq storagefee (bcadd storagefee tofee))))
-        (wbp (digits)
-          (setq newtoamount (bcadd (or oldtoamount 0) amount)))
-        (when percent
-          (multiple-value-setq (newtoamount fraction)
-            (normalize-balance newtoamount fraction digits)))
-        (when (and oldtoamount
-                   (< (bccomp oldtoamount 0) 0)
-                   (>= (bccomp newtoamount 0) 0))
-          ;; This shouldn't be possible.
-          ;; If it happens, it means the asset is out of balance.
-          (validation-error "Asset out of balance on self-spend"))))
-
-    (unless (equal id serverid)
-      (multiple-value-bind (tf rf fs) (getfees client)
-        (declare (ignore rf))
-        (setq tranfee tf
-              tranfee-asset (fee-assetid tranfee))
-        (setf operation (if (equal id toid) $TRANSFER $SPEND)
-              fees (delete-if
-                    (lambda (f)
-                      (or (not (equal (fee-assetid f) assetid))
-                          (let ((asset (getasset client (fee-assetid f))))
-                            (equal (or (asset-issuer asset)
-                                       (asset-id asset))
-                                   id))))
-                    (delete-if-not
-                     (lambda (f) (equal (fee-type f) operation))
-                     fs))))
-      (setq tranfee-amt
-            (if (equal id toid)
-                (if oldtoamount "0" "1")
-                (fee-amount tranfee)))
-      (cond ((and (equal tranfee-asset assetid)
-                  (equal $MAIN acct))
-             (setq newamount (bcsub newamount tranfee-amt))
-             (dolist (fee fees)
-               (when (equal assetid (fee-assetid fee))
-                 (let ((feeamt (fee-amount fee)))
-                   (setq newamount (bcsub newamount feeamt))
-                   (push (cons assetid feeamt) fees-amounts))))
-             (when (and (>= (bccomp oldamount 0) 0)
-                        (< (bccomp newamount 0) 0))
-               (validation-error "Insufficient balance for transaction fee")))
-            ((and (equal id toid)
-                  (equal tranfee-asset assetid)
-                  (equal $MAIN toacct))
-             (setq newtoamount (bcsub newtoamount tranfee-amt))
-             (dolist (fee fees)
-               (when (equal assetid (fee-assetid fee))
-                 (let ((feeamt (fee-amount fee)))
-                   (setq newtoamount (bcsub newtoamount (fee-amount fee)))
-                   (push (cons assetid feeamt) fees-amounts))))
-             (when (eql 0 (bccomp newtoamount oldtoamount))
-               (validation-error "Transferring transaction fee to a new acct is silly"))
-             (when (and (>= (bccomp oldtoamount 0) 0)
-                        (< (bccomp newtoamount 0) 0))
-               (validation-error
-                "Insufficient destination balance for transaction fee")))
-            (t
-             (let ((old-fee-balance (userbalance client $MAIN tranfee-asset))
-                   (feeamt 0))
-               (dolist (fee fees)
-                 (when (equal tranfee-asset (fee-assetid fee))
-                   (let ((amt (fee-amount fee)))
-                     (setf feeamt (bcadd feeamt amt))
-                     (push (cons tranfee-asset amt) fees-amounts))))
-               (unless (and (bc= tranfee-amt 0)
-                            (bc= feeamt 0))
-                 (setq fee-balance (bcsub old-fee-balance tranfee-amt feeamt)
-                       need-fee-balance-p t)
-                 (when (and (>= (bccomp old-fee-balance 0) 0)
-                            (< (bccomp fee-balance 0) 0))
-                   (validation-error
-                    "Insufficient tokens for transaction fee"))))))
-
-      ;; Compute non-refundable fee amounts for other than the token asset
-      (dolist (fee fees)
-        (let ((feeid (fee-assetid fee))
-              (feeamt (fee-amount fee)))
-          (unless (or (equal feeid tranfee-asset)
-                      (not (equal feeid assetid)))
-            (cond ((> (bccomp newamount feeamt) 0)
-                   (setf newamount (bcsub newamount feeamt)))
-                  ((and (equal id toid)
-                        (> (bccomp newtoamount feeamt) 0))
-                   (setf newtoamount (bcsub newtoamount feeamt)))
-                  (t (error "Insufficient balance for nonrefundable fee")))
-            (push (cons feeid feeamt) fees-amounts)))))
-
     ;; Numbers are computed and validated.
     ;; Create messages for server.
     (let (spend
@@ -4002,21 +3988,25 @@ public class Client {
 		}
 	}
 
-/*
-	public StorageInfo getClientStorageInfo(String assetid) {
-		AssetInfo asset = this.getAsset(assetid);
+	/**
+	 * Return StorageInfo on an assetid
+	 * @param assetid
+	 * @return
+	 * @throws ClientException
+	 */
+	public StorageInfo getClientStorageInfo(String assetid) throws ClientException {
+		Asset asset = this.getAsset(assetid);
 		if (asset == null) return null;
 		String issuer = asset.issuer;
 		String percent = asset.percent;
 		if (id.equals(issuer)) return null;
-		if (percent==null || BC.isZero(percent)) return null;
+		if (percent==null || BCMath.isZero(percent)) return null;
 		String msg = db.getAccountDB().get(this.userFractionKey(), assetid);
 		if (msg == null) return new StorageInfo(percent, "0", "0");
-		Parser.Dict args = (Parser.Dict)(this,unpackServerMsg(msg, T.FRACTION).get(T.MSG));
+		Parser.Dict args = (Parser.Dict)(this.unpackServermsg(msg, T.FRACTION).get(T.MSG));
 		return new StorageInfo(percent, args.stringGet(T.AMOUNT), args.stringGet(T.TIME));
 	}
 
-*/
 	public String serverKey(String prop) {
 		return serverid + '/' + prop;
 	}

@@ -382,6 +382,32 @@ public class Utility {
 	  res.add(start==len ? "" : string.substring(start));
 	  return res.toArray(new String[res.size()]);
   }
+  
+  /**
+   * Seconds per year times 100
+   */
+  public static final String secsPerYearPct = BCMath.sMultiply(String.valueOf(60 * 60 * 24 * 365), "100");
+  
+  /**
+   * Compute the storage fee of balanceBuf[0] with the given percent, for now-baltime, and percent digits
+   * Return the fee as the function value. Store balance - fee in balanceBuf[0]
+   * @param balanceBuf a one-element array containing the balance. Decremented by the returned fee
+   * @param baltime the time of the balance
+   * @param now the time now
+   * @param percent the fee percent
+   * @param digits the precision digits for the fee percent
+   * @return
+   */
+  public static String storageFee(String[]balanceBuf, String baltime, String now, String percent, int digits) {
+	  String balance = balanceBuf[0];
+	  BCMath bcm = new BCMath(digits);
+	  if (bcm.compare(percent, "0") == 0) return "0";
+	  String fee = bcm.divide(bcm.multiply(balance, percent, BCMath.sSubtract(now, baltime)), secsPerYearPct);
+	  if (bcm.compare(fee,  "0") < 0) fee = "0";
+	  else if (bcm.compare(fee, balance) > 0) fee = balance;
+	  balanceBuf[0] = bcm.subtract(balance, fee);
+	  return fee;
+  }
 }
 
 //////////////////////////////////////////////////////////////////////
