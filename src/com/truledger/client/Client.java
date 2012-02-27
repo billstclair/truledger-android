@@ -2356,28 +2356,25 @@ public class Client {
 			}
 		}
 		
-		// Numbers are computed and validated. Create message for the server
+		// Numbers are computed and validated. Create messages for the server. 
+		String feeandbal = null;
+		String feebal = null;
+		String feemsg = null;
+		Vector<String> feeMsgs = null;
+		String balance;
+		String tobalance = null;
+		String outboxhash = null;
+		String balancehash = null;
+		String storagefeemsg = null;
+		String fracmsg = null;
+		
+		if (!Utility.isBlank(note) && !toid.equals(T.COUPON)) {
+			String[] ids = id.equals(toid) ? new String[]{id} : new String[]{id, toid};
+			note = Crypto.encryptNote(db.getPubkeyDB(), note, ids);
+		}
 		
 	}
 /*
-    ;; Numbers are computed and validated.
-    ;; Create messages for server.
-    (let (spend
-          (feeandbal nil)
-          (feebal nil)
-          (feemsg nil)
-          (fees-msgs nil)
-          balance
-          (tobalance nil)
-          (outboxhash nil)
-          (balancehash nil)
-          (storagefeemsg nil)
-          (fracmsg nil)
-          msg)
-      (when (and note (not (equal toid $COUPON)))
-        (setf note (encrypt-note (pubkeydb client)
-                                 (if (equal id toid) (list id) (list id toid))
-                                 note)))
       (setq spend (apply #'custmsg client $SPEND serverid time
                          toid assetid amount (and note (list note))))
       (when (and tranfee-amt (not (equal id toid)))

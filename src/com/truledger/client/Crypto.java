@@ -21,6 +21,8 @@ import java.security.spec.RSAKeyGenParameterSpec;
 
 import javax.crypto.Cipher;
 import javax.crypto.NoSuchPaddingException;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 
 import org.spongycastle.jce.provider.BouncyCastleProvider;
 import org.spongycastle.openssl.PEMReader;
@@ -308,6 +310,107 @@ public class Crypto {
 	public static double getVer() {
 		initialize();
 		return ver;
+	}
+	
+	/**
+	 * Return a 16-byte random byte array
+	 * @param base64Buf if non-null, base64Buf[0] will be set with the base64 encoding of the return value
+	 * @return
+	 */
+	public static byte[] newCryptoSessionPassword(String[] base64Buf) {
+		byte[] bytes = new byte[16];
+		random.nextBytes(bytes);
+		if (base64Buf != null) base64Buf[0] = Utility.base64Encode(bytes);
+		return bytes;
+	}
+	
+	public static Cipher AES_CIPHER = null;
+	
+	public static Cipher aesCipher () {
+		if (AES_CIPHER != null) return AES_CIPHER;
+		try {
+			AES_CIPHER = Cipher.getInstance("AES/CBC/PKCS5PADDING");
+		} catch (Exception e) {
+		}
+		return AES_CIPHER;
+	}
+	
+	// From http://www.javamex.com/tutorials/cryptography/block_modes_java.shtml
+	public static String aesEncrypt(String plaintext, byte[] password, String[] ivBuf) {
+		try {
+			Cipher c = aesCipher();
+			SecretKeySpec k = new SecretKeySpec(password, "AES");
+			c.init(Cipher.ENCRYPT_MODE, k);
+			// Could do this with a limited size buffer, but note sizes are already liimted to 4K, so it's probably OK
+			byte[] bytes = plaintext.getBytes();
+			byte[] cipherText = c.doFinal(bytes);
+			ivBuf[0] = Utility.base64Encode(c.getIV());
+			return Utility.base64Encode(cipherText);
+		} catch (Exception e) {
+			return null;
+		}
+	}
+	
+	public static String aesDecrypt(String cipherText, byte[] password, String iv) {
+		try {
+			Cipher c = aesCipher();
+			SecretKeySpec k = new SecretKeySpec(password, "AES");
+			byte[] ivbytes = Utility.base64Decode(iv);
+			c.init(Cipher.DECRYPT_MODE, k, new IvParameterSpec(ivbytes));
+			byte[] bytes = Utility.base64Decode(cipherText);
+			byte[] plainText = c.doFinal(bytes);
+			return new String(plainText);
+		} catch (Exception e) {
+			return null;
+		}
+	}
+	
+	public static String encryptNote(FSDB pubkeydb, String note, String... ids) {
+		if (Utility.isBlank(note)) return note;
+		String[] base64Buf = new String[1];
+		byte[] password = newCryptoSessionPassword(base64Buf);
+		String passwordString = base64Buf[0];
+		String[] ivbuf = new String[1];
+		String cipherText = aesEncrypt(note, password, ivbuf);
+		String ivstr = ivbuf[0];
+		String keys = "";
+		try {
+			for (int i=0; i<ids.length; i++) {
+				String id = ids[i];
+				String pubkey = pubkeydb.get(id);
+				if (pubkey == null) return null;
+				String key = RSAPubkeyEncrypt(passwordString, pubkey);
+				if (i > 0) keys += '|';
+				keys += id + ':' + key; 
+			}
+		} catch (Exception e) {
+			return null;
+		}
+		return "[" + keys + ',' + ivstr + ',' + cipherText + ']';
+	}
+	
+	public static String decryptNote(String id, KeyPair privkey, String encryptedNote) {
+		if (encryptedNote.equals("")) return "";
+		try {
+			String[] kic = Utility.parseSquareBracketString(encryptedNote);
+			if (kic.length != 3) return null;
+			String keys = kic[0];
+			String iv = kic[1];
+			String cipherText = kic[2];
+			String[] idKeyPairs = Utility.splitString('|', keys);
+			for (String pair: idKeyPairs) {
+				String[] idAndKey = Utility.splitString(':', pair);
+				if (id.equals(idAndKey[0])) {
+					String passwordString = RSAPrivkeyDecrypt(idAndKey[1], privkey);
+					byte[] password = Utility.base64Decode(passwordString);
+					return aesDecrypt(cipherText, password, iv);
+				}
+			}
+			// No password for ID, return null
+			return null;
+		} catch (Exception e) {
+			return null;
+		}
 	}
 }
 

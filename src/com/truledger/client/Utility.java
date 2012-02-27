@@ -408,6 +408,65 @@ public class Utility {
 	  balanceBuf[0] = bcm.subtract(balance, fee);
 	  return fee;
   }
+  
+  /**
+   * Parse a string of the form "[x,y,...,z]" into an array of strings: new String[]{x, y, ..., z}
+   * @param string
+   * @return
+   * @throws Exception
+   */
+  public static String[] parseSquareBracketString(String string) throws Exception {
+	  string = string.trim(); 
+	  Vector<String> res = new Vector<String>();
+	  int len = string.length();
+	  if (len==0 || string.charAt(0)!='[') {
+		  throw new Exception("First non-whitespace char not opening square bracket");
+	  }
+	  boolean escaped = false;
+	  int start = 1;
+	  for (int i=1; i<len; i++) {
+		  if (escaped) {
+			  escaped = false;
+			  continue;
+		  }
+		  char chr = string.charAt(i);
+		  if (chr == '\\') escaped = true;
+		  else if (chr == ',') {
+			  res.add(string.substring(start, i));
+			  start = i+1;
+		  } else if (chr == ']') {
+			  if (i != (len-1)) throw new Exception("Non-whitespace character after closing square bracket");
+			  res.add(string.substring(start, i));
+			  return res.toArray(new String[res.size()]);
+		  }
+	  }
+	  throw new Exception("No closing square bracket");
+  }
+  
+/*
+    (loop
+       (when (>= i len) (error "No closing square bracket"))
+       (let ((char (aref string i)))
+         (incf i)
+         (cond (esc-p
+                (write-char char stream)
+                (setf esc-p nil))
+               ((eql char #\\)
+                (setf esc-p t))
+               ((eql char #\,)
+                (push (get-output-stream-string stream) res))
+               ((eql char #\])
+                (push (get-output-stream-string stream) res)
+                (return))
+               (t (write-char char stream)))))
+    ;; Ensure nothing but whitespace at end
+    (loop
+       (when (>= i len) (return))
+       (unless (member (aref string i) *whitespace*)
+         (error "Non-whitespace character after closing square bracket"))
+       (incf i))
+    (nreverse res)))
+ */
 }
 
 //////////////////////////////////////////////////////////////////////
