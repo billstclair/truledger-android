@@ -28,6 +28,8 @@ import android.content.Context;
 import android.net.http.AndroidHttpClient;
 
 import com.truledger.client.LispList.Keyword;
+import com.truledger.client.Utility.DirHash;
+import com.truledger.client.Utility.MsgUnpacker;
 
 /**
  * A Truledger client API. Talks the protocol of truledger.com
@@ -2203,9 +2205,9 @@ public class Client {
 		String newtoamount = null;
 		String oldtoamount = null;
 		Fee tranfee = null;
-		String tranfeeAsset;
+		String tranfeeAsset = null;
 		String tranfeeAmt = null;
-		String feeBalance;
+		String feeBalance = null;
 		boolean needFeeBalance = false;
 		String operation = null;
 		Fees fees = null;
@@ -2373,33 +2375,29 @@ public class Client {
 			note = Crypto.encryptNote(db.getPubkeyDB(), note, ids);
 		}
 		
+		String spend = Utility.isBlank(note) ?
+				this.custmsg(T.SPEND, serverid, time, toid, assetid, amount) :
+				this.custmsg(T.SPEND, serverid, time, toid, assetid, amount, note);
+		if (tranfeeAmt!=null && !id.equals(toid)) {
+			feemsg = this.custmsg(T.TRANFEE, serverid, time, tranfeeAsset, tranfeeAmt);
+			feeandbal = feemsg;
+		}
+		if (needFeeBalance) {
+			feebal = this.custmsg(T.BALANCE, serverid, time, tranfeeAsset, feeBalance);
+			if (feeandbal != null) feeandbal += "." + feebal;
+			else feeandbal = feebal;
+		}
+		balance = this.custmsg(T.BALANCE, serverid, time, assetid, newamount, acct);
+		if (id.equals(toid)) {
+			tobalance = this.custmsg(T.BALANCE, serverid, time, assetid, newtoamount, toacct);
+		}
+		if (!id.equals(serverid) && !id.equals(toid)) {
+			outboxhash = this.outboxhashmsg (time, new String[]{spend}, null, useTwoPhaseCommit);
+		}
+		
+		// Create fees messages
 	}
 /*
-      (setq spend (apply #'custmsg client $SPEND serverid time
-                         toid assetid amount (and note (list note))))
-      (when (and tranfee-amt (not (equal id toid)))
-        (setq feemsg (custmsg client $TRANFEE serverid time
-                              tranfee-asset tranfee-amt)
-              feeandbal feemsg))
-      (when need-fee-balance-p
-        (setq feebal (custmsg client $BALANCE serverid time
-                              tranfee-asset fee-balance))
-        (if feeandbal
-            (dotcat feeandbal "." feebal)
-            (setq feeandbal feebal)))
-
-      (setq balance (custmsg client $BALANCE serverid time
-                             assetid newamount acct))
-      (when (equal id toid)
-        (setq tobalance (custmsg client $BALANCE serverid time
-                                 assetid newtoamount toacct)))
-      (when (and (not (equal id serverid))
-                 (not (equal id toid)))
-        (setq outboxhash (outboxhashmsg client time
-                                        :newitem spend
-                                        :two-phase-commit-p two-phase-commit-p)))
-
-      ;; Create fees messages
       (dolist (cell fees-amounts)
         (push (custmsg client $FEE serverid time operation (car cell) (cdr cell))
               fees-msgs))
@@ -4144,13 +4142,10 @@ public class Client {
 		return new String[]{args.stringGet(T.AMOUNT), args.stringGet(T.TIME), msg};
 	}
 	
+	public String userOutboxKey() {
+		return this.userServerKey(T.OUTBOX);
+	}
 /*
-(defmethod useroutboxkey ((client client) &optional time)
-  (let ((key (userserverkey client $OUTBOX)))
-    (if time
-        (append-db-keys key time)
-        key)))
-
 (defmethod useroutbox ((client client) time)
   (db-get (db client) (useroutboxkey client time)))
 
@@ -4585,8 +4580,6 @@ public class Client {
           (get-last-transaction client t))
         nil))))
 
-(defmethod unpacker ((client client))
-  #'(lambda (msg) (unpack-servermsg client msg)))
 */
 	
 	public String balancehashmsg(String time, StringMapMap acctbals) {
@@ -4594,17 +4587,78 @@ public class Client {
 		return null;
 	}
 	
+	/**
+	 * Cached value for unpacker()
+	 */
+	protected Utility.MsgUnpacker unpacker = null;
+	
+	/**
+	 * Cache and return a MsgUnpacker instance for this Client instance
+	 * @return
+	 */
+	protected Utility.MsgUnpacker unpacker() {
+		if (unpacker != null) return unpacker;
+		unpacker = new Utility.MsgUnpacker() {
+			public Parser.Dict unpack(String msg) throws Exception {
+				return Client.this.unpackServermsg(msg);
+			}
+		};
+		return unpacker;
+	}
+	
+	/**
+	 * Return a balance hash message
+	 * @param time the commit time
+	 * @param acctbals map acct to map of assetid to balance message
+	 * @param useTwoPhaseCommit
+	 * @return
+	 * @throws ClientException
+	 */
+	public String balancehashmsg(String time, StringMapMap acctbals, boolean useTwoPhaseCommit) throws ClientException {
+		Utility.DirHash dirhash;
+		try {
+			dirhash = this.balancehash(db.getAccountDB(), this.unpacker(), this.userBalanceKey(), acctbals);
+		} catch (Exception e) {
+			throw new ClientException(e);
+		}
+		String hashcnt = String.valueOf(dirhash.count);
+		String hash = dirhash.hash;
+		return useTwoPhaseCommit ?
+				this.custmsg(T.BALANCEHASH, serverid, time, hashcnt, hash, T.TWOPHASECOMMIT) :
+				this.custmsg(T.BALANCEHASH, serverid, time, hashcnt, hash);
+	}
+	
+	/**
+	 * Return the hash of the outbox messages
+	 * @param transtime the transaction time
+	 * @param newitems new outbox messages
+	 * @param removedtimes times of removed outbox messages
+	 * @param useTwoPhaseCommit
+	 * @return
+	 * @throws ClientException
+	 */
+	public String outboxhashmsg (String transtime, String[] newitems, String[] removedtimes, boolean useTwoPhaseCommit)
+			throws ClientException {
+		FSDB accountDB = db.getAccountDB();
+		String key = this.userOutboxKey();
+		Utility.DirHash dirHash;
+		try {
+			dirHash = Utility.dirhash(accountDB, key, this.unpacker(), removedtimes, newitems);
+		} catch (Exception e) {
+			throw new ClientException(e);
+		}
+		String hash = "";
+		String hashcnt = "0";
+		if (dirHash != null) {
+			hash = dirHash.hash;
+			hashcnt = String.valueOf(dirHash.count);
+		}
+		return useTwoPhaseCommit ?
+				this.custmsg(T.OUTBOXHASH, serverid, transtime, hashcnt, hash, T.TWOPHASECOMMIT) :
+				this.custmsg(T.OUTBOXHASH, serverid, transtime, hashcnt, hash);
+	}
+	
 /*
-(defmethod balancehashmsg ((client client) time acctbals &optional
-                           two-phase-commit-p)
-  (let* ((db (db client))
-         (serverid (serverid client)))
-    (multiple-value-bind (hash hashcnt)
-        (balancehash db (unpacker client) (userbalancekey client) acctbals)
-      (if two-phase-commit-p
-          (custmsg client $BALANCEHASH serverid time hashcnt hash $TWOPHASECOMMIT)
-          (custmsg client $BALANCEHASH serverid time hashcnt hash)))))
-
 (defmethod outboxhashmsg ((client client) transtime &key
                           newitem removed-times two-phase-commit-p)
   (let ((db (db client))
@@ -4618,6 +4672,90 @@ public class Client {
           (custmsg client $OUTBOXHASH serverid transtime
                    (or hashcnt 0) (or hash ""))))))
 */
+	
+	/**
+	 * Compute the balance hash of all the server-signed messages in subdirs of balanceKey of db.
+	 * @param db
+	 * @param unpacker Parses and matches a server-signed message string into a Parser.Dict instance 
+	 * @param balancekey
+	 * @param acctbals if non-null, maps acct names to maps of assetids to non-server-signed balance messages.
+	 * @return
+	 * @throws ClientException
+	 */
+	public Utility.DirHash balancehash(FSDB db, Utility.MsgUnpacker unpacker, String balancekey, StringMapMap acctbals) 
+			throws ClientException {
+		String hash = null;
+		int hashcnt = 0;
+		String[] accts = db.contents(balancekey);
+		if (acctbals != null) {
+			Vector<String> acctsv = new Vector<String>();
+			Set<String> keys = acctbals.keySet();
+			for (String key: keys) {
+				if (Utility.position(key, accts) < 0) acctsv.add(key);
+			}
+			int size = acctsv.size();
+			if (size > 0) {
+				String[] newaccts = new String[accts.length + size];
+				int i = 0;
+				for (String acct: accts) newaccts[i++] = acct;
+				for (String acct: acctsv) newaccts[i++] = acct;
+				accts = newaccts;
+			}
+		}
+		Vector<String> newitemsv = new Vector<String>();
+		Vector<String> removednamesv = new Vector<String>();
+		for (String acct: accts) {
+			newitemsv.clear();
+			removednamesv.clear();
+			StringMap newacct = acctbals!=null ? acctbals.get(acct) : null;
+			if (newacct != null) {
+				Set<String> assetids = newacct.keySet();
+				for (String assetid: assetids) {
+					String msg = newacct.get(assetid);
+					newitemsv.add(msg);
+					removednamesv.add(assetid);
+				}
+			}
+			int cnt = newitemsv.size();
+			String[] newitems = cnt>0 ? newitemsv.toArray(new String[cnt]) : null;
+			cnt = removednamesv.size();
+			String[] removednames = cnt>0 ? removednamesv.toArray(new String[cnt]) : null;
+			try {
+				Utility.DirHash dirHash = Utility.dirhash(db, balancekey + '.' + acct, unpacker, removednames, newitems);
+				if (dirHash != null) {
+					hash = hash==null ? dirHash.hash : hash + '.' + dirHash.hash;
+					hashcnt += dirHash.count;
+				}
+			} catch (Exception e) {
+				throw new ClientException(e);
+			}
+		}
+		if (hashcnt > 1) hash = Crypto.sha1(hash);
+		return new Utility.DirHash(hash==null ? "" : hash, hashcnt);
+	}
+
+	  /*
+	      (loop
+	         for acct in accts
+	         for newitems = nil
+	         for removed-names = nil
+	         for newacct = (and acctbals (gethash acct acctbals))
+	         do
+	           (when newacct
+	             (loop
+	                for assetid being the hash-key using (hash-value msg) of newacct
+	                do
+	                  (push msg newitems)
+	                  (push assetid removed-names)))
+	           (multiple-value-bind (hash1 cnt)
+	               (dirhash db (append-db-keys balancekey acct) unpacker
+	                        newitems removed-names)
+	             (when hash1
+	               (setq hash (if hash (strcat hash "." hash1) hash1))
+	               (incf hashcnt cnt))))
+	      (when (> hashcnt 1) (setq hash (sha1 hash)))
+	      (values (or hash "") hashcnt)))
+	   */
 
 	// Web client session support
 	
@@ -5793,3 +5931,21 @@ public class Client {
 */
 	
 }
+
+//////////////////////////////////////////////////////////////////////
+///
+/// Copyright 2011-2012 Bill St. Clair
+///
+/// Licensed under the Apache License, Version 2.0 (the "License")
+/// you may not use this file except in compliance with the License.
+/// You may obtain a copy of the License at
+///
+///     http://www.apache.org/licenses/LICENSE-2.0
+///
+/// Unless required by applicable law or agreed to in writing, software
+/// distributed under the License is distributed on an "AS IS" BASIS,
+/// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+/// See the License for the specific language governing permissions
+/// and limitations under the License.
+///
+//////////////////////////////////////////////////////////////////////

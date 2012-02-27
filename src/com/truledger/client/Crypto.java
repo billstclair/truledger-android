@@ -347,7 +347,7 @@ public class Crypto {
 			ivBuf[0] = Utility.base64Encode(c.getIV());
 			return Utility.base64Encode(cipherText);
 		} catch (Exception e) {
-			return null;
+			return "";
 		}
 	}
 	
@@ -361,7 +361,7 @@ public class Crypto {
 			byte[] plainText = c.doFinal(bytes);
 			return new String(plainText);
 		} catch (Exception e) {
-			return null;
+			return "";
 		}
 	}
 	
@@ -372,19 +372,20 @@ public class Crypto {
 		String passwordString = base64Buf[0];
 		String[] ivbuf = new String[1];
 		String cipherText = aesEncrypt(note, password, ivbuf);
+		if (Utility.isBlank(cipherText)) return "";
 		String ivstr = ivbuf[0];
 		String keys = "";
 		try {
 			for (int i=0; i<ids.length; i++) {
 				String id = ids[i];
 				String pubkey = pubkeydb.get(id);
-				if (pubkey == null) return null;
+				if (pubkey == null) return "";
 				String key = RSAPubkeyEncrypt(passwordString, pubkey);
 				if (i > 0) keys += '|';
 				keys += id + ':' + key; 
 			}
 		} catch (Exception e) {
-			return null;
+			return "";
 		}
 		return "[" + keys + ',' + ivstr + ',' + cipherText + ']';
 	}
@@ -393,7 +394,7 @@ public class Crypto {
 		if (encryptedNote.equals("")) return "";
 		try {
 			String[] kic = Utility.parseSquareBracketString(encryptedNote);
-			if (kic.length != 3) return null;
+			if (kic.length != 3) return "";
 			String keys = kic[0];
 			String iv = kic[1];
 			String cipherText = kic[2];
@@ -406,17 +407,17 @@ public class Crypto {
 					return aesDecrypt(cipherText, password, iv);
 				}
 			}
-			// No password for ID, return null
-			return null;
 		} catch (Exception e) {
-			return null;
+			return "";
 		}
+		// No password for ID, return null
+		return "";
 	}
 }
 
 //////////////////////////////////////////////////////////////////////
 ///
-/// Copyright 2011 Bill St. Clair
+/// Copyright 2011-2012 Bill St. Clair
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License")
 /// you may not use this file except in compliance with the License.

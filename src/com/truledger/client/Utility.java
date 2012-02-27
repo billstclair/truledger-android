@@ -2,6 +2,7 @@ package com.truledger.client;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Vector;
 
 import org.spongycastle.util.encoders.Base64;
@@ -443,35 +444,76 @@ public class Utility {
 	  throw new Exception("No closing square bracket");
   }
   
-/*
-    (loop
-       (when (>= i len) (error "No closing square bracket"))
-       (let ((char (aref string i)))
-         (incf i)
-         (cond (esc-p
-                (write-char char stream)
-                (setf esc-p nil))
-               ((eql char #\\)
-                (setf esc-p t))
-               ((eql char #\,)
-                (push (get-output-stream-string stream) res))
-               ((eql char #\])
-                (push (get-output-stream-string stream) res)
-                (return))
-               (t (write-char char stream)))))
-    ;; Ensure nothing but whitespace at end
-    (loop
-       (when (>= i len) (return))
-       (unless (member (aref string i) *whitespace*)
-         (error "Non-whitespace character after closing square bracket"))
-       (incf i))
-    (nreverse res)))
- */
+  
+  
+  /**
+   * Interface that parses and matches a server-wrapped message string into a Parser.Dict
+   * @author billstclair
+   *
+   */
+  public static interface MsgUnpacker {
+	  public Parser.Dict unpack(String msg) throws Exception;
+  }
+  
+  /**
+   * Wrap the return values from dirhash()
+   * @author billstclair
+   */
+  public static class DirHash {
+	  public String hash;
+	  public int count;
+	  public DirHash(String hash, int count) {
+		  this.hash = hash;
+		  this.count = count;
+	  }
+  }
+  
+  /**
+   * Return the hash of the key directory of db.
+   * Files should be server-signed messages that can be parsed with unpacker.
+   * removedNames is file names to ignore.
+   * newitems is non-server-signed elements about to be added, which need to be included in the hash
+   * Hashing sorts all the messages alphabetically, then appends them, sepearated by periods
+   * @param db
+   * @param key
+   * @param unpacker
+   * @param removedNames
+   * @param newitems
+   * @return null if there are no items in the directory, or they're all removed
+   */
+  public static DirHash dirhash(FSDB db, String key, MsgUnpacker unpacker, String[] removedNames, String... newitems)
+		  throws Exception {
+	  String[] contents = db.contents(key);
+	  Vector<String> itemsv = new Vector<String>();
+	  for (String name: contents) {
+		  if (position(name, removedNames) >= 0) continue;
+		  String msg = db.get(key, name);
+		  if (msg == null) continue;	// Can be null from validateDBUpdate
+		  Parser.Dict args = unpacker.unpack(msg);
+		  Parser.Dict req = (Parser.Dict)args.get(T.MSG);
+		  if (req == null) throw new Exception("Directory msg is not a server-wrapped message");
+		  msg = Parser.getParseMsg(req);
+		  if (msg == null) throw new Exception ("getParseMsg didn't find anything");
+		  itemsv.add(msg.trim());
+	  }
+	  if (newitems != null) {
+		  for (String item: newitems) {
+			  itemsv.add(item.trim());
+		  }
+	  }
+	  int count = itemsv.size();
+	  if (count == 0) return null;
+	  String[] items = itemsv.toArray(new String[count]);
+	  Arrays.sort(items, String.CASE_INSENSITIVE_ORDER);
+	  String msg = implode('.', items);
+	  return new DirHash(Crypto.sha1(msg), count);
+  }
 }
+
 
 //////////////////////////////////////////////////////////////////////
 ///
-/// Copyright 2011 Bill St. Clair
+/// Copyright 2011-2012 Bill St. Clair
 ///
 /// Licensed under the Apache License, Version 2.0 (the "License")
 /// you may not use this file except in compliance with the License.
