@@ -1490,6 +1490,18 @@ public class Client {
 			super();
 			this.put(key,  value);
 		}
+		
+		/**
+		 * Get an element, creating it if it's not already there
+		 */
+		public StringMap getInited(String key) {
+			StringMap res = this.get(key);
+			if (res == null) {
+				res = new StringMap();
+				this.put(key, res);
+			}
+			return res;
+		}
 	}
 	
 	public Asset addAsset(String scale, String precision, String assetname, String percent) throws ClientException {
@@ -2181,7 +2193,18 @@ public class Client {
 		return msg;
 	}
 	
-	public SpendFees spendInternal(String toid, String assetid, String formattedAmount, String acct, String note, String toacct)
+	/**
+	 * Do the work for spend()
+	 * @param toid
+	 * @param assetid
+	 * @param formattedAmount
+	 * @param acct
+	 * @param note
+	 * @param toacct
+	 * @return
+	 * @throws ClientException
+	 */
+	protected SpendFees spendInternal(String toid, String assetid, String formattedAmount, String acct, String note, String toacct)
 			throws ClientException {
 		if (toid==null || assetid==null || formattedAmount==null) {
 			validationError("toid, acct, assetid, and formattedAmount must all be non-null");
@@ -2362,7 +2385,7 @@ public class Client {
 		String feeandbal = null;
 		String feebal = null;
 		String feemsg = null;
-		Vector<String> feeMsgs = null;
+		String[] feeMsgs = null;
 		String balance;
 		String tobalance = null;
 		String outboxhash = null;
@@ -2396,135 +2419,122 @@ public class Client {
 		}
 		
 		// Create fees messages
+		Set<String> assetids = feeAmounts.keySet();
+		int i = 0;
+		for (String feeAssetid: assetids) {
+			if (feeMsgs == null) feeMsgs = new String[assetids.size()];
+			String feeAmount = feeAmounts.get(assetid);
+			feeMsgs[i++] = this.custmsg(T.FEE, serverid, time, operation, feeAssetid, feeAmount);
+		}
+		
+		// Compute balancehash
+		if (!id.equals(serverid)) {
+			StringMapMap acctbals = new StringMapMap();
+			acctbals.getInited(acct).put(assetid,  balance);
+			if (feebal != null) {
+				acctbals.getInited(T.MAIN).put(tranfeeAsset,  feebal);
+			}
+			if (tobalance != null) {
+				acctbals.getInited(toacct).put(assetid,  tobalance);
+			}
+			balancehash = this.balancehashmsg(time,  acctbals, useTwoPhaseCommit);			
+		}
+		
+		// Prepare storage fee related message components
+		if (percent != null) {
+			storagefeemsg = this.custmsg(T.STORAGEFEE, serverid, time, assetid, storagefee);
+			fracmsg = this.custmsg(T.FRACTION, serverid, time, assetid, fraction);
+		}
+		
+		// Send request to server, and get response
+		String msg = spend;
+		if (feeandbal != null) msg += '.' + feeandbal;
+		msg += '.' + balance;
+		if (tobalance != null) msg += '.' + tobalance;
+		if (outboxhash != null) msg += '.' + outboxhash;
+		if (balancehash != null) msg += '.' + balancehash;
+		if (percent != null) msg += '.' + storagefeemsg + '.' + fracmsg;
+		for (String fee: feeMsgs) msg += '.' + fee;
+		
+		String servermsg = server.process(msg);     // *** Here's the server call ***
+		Parser.DictList reqs;
+		try {
+			reqs = parser.parse(servermsg, true);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		StringMap msgs = new StringMap(spend, null, balance, null);
+		String coupon = null;
+		String encryptedCoupon = null;
+		try {
+			this.matchServerReq(reqs.get(0), T.ATSPEND);
+		} catch (ClientException e) {
+			Parser.Dict args = this.matchServerReq(reqs.get(0));
+			String request = args.stringGet(T.REQUEST);
+			throw new ClientException("Spend request returned unknown message type: " + request);
+		}
+		if (tobalance != null) msgs.put(tobalance,  null);
+		if (outboxhash != null) msgs.put(outboxhash,  null);
+		if (balancehash != null) msgs.put(balancehash, null);
+		if (feeandbal != null) {
+			if (feemsg != null) msgs.put(feemsg,  null);
+			if (feebal != null) msgs.put(feebal,  null);
+		}
+		if (percent != null) {
+			msgs.put(storagefeemsg, null);
+			msgs.put(fracmsg,  null);
+		}
+		for (String fee: feeMsgs) msgs.put(fee,  null);
+		Set<String> msgkeys = msgs.keySet();
+		for (Parser.Dict req: reqs) {
+			String onemsg = Parser.getParseMsg(req);
+			Parser.Dict oneargs = this.matchServerReq(req);
+			if (T.COUPONENVELOPE.equals(oneargs.stringGet(T.REQUEST))) {
+				if (coupon != null) throw new ClientException("Multiple coupons returned from server");
+				coupon = onemsg;
+				encryptedCoupon = oneargs.stringGet(T.ENCRYPTEDCOUPON);
+			} else {
+				String m = oneargs.stringGet(T.MSG).trim();
+				if (!msgkeys.contains(m)) throw new ClientException("Returned message wasn't sent: " + m);
+				if (msgs.get(m) != null) throw new ClientException("Duplicated returned message: " + m);
+				msgs.put(msg,  onemsg);
+			}
+		}
+		for (String m: msgkeys) {
+			msg = msgs.get(m);
+			if (msg == null) throw new ClientException("Message not returned from spend: " + m);
+		}
+		
+		// Do the second phase of the commit
+		if (useTwoPhaseCommit) lastTransaction = this.sendCommitMsg(time);
+		
+		// All is well. Commit this baby
+		ClientDB.AccountDB accountDB = db.getAccountDB();
+		accountDB.put(this.userBalanceKey(acct), assetid, msgs.get(balance));
+		if (tobalance != null) accountDB.put(this.userBalanceKey(toacct), assetid, msgs.get(tobalance));
+		String key = this.userServerKey();
+		if (outboxhash != null) accountDB.put(key, T.OUTBOXHASH, msgs.get(outboxhash));
+		if (balancehash != null) accountDB.put(key,  T.BALANCEHASH, msgs.get(balancehash));
+		spend = msgs.get(spend);
+		if (feeandbal != null) {
+			spend += '.' + msgs.get(feemsg);
+			if (feebal != null) accountDB.put(this.userBalanceKey(T.MAIN), tranfeeAsset, msgs.get(feebal));
+		}
+		if (coupon != null) {
+			spend += '.' + coupon;
+			this.coupon = encryptedCoupon;
+		}
+		if (!id.equals(toid) && !(id.equals(serverid))) accountDB.put(this.userOutboxKey(), time, spend);
+		this.lastSpendTime = time;
+		if (percent != null) accountDB.put(this.userFractionKey(), assetid, msgs.get(fracmsg));
+		if (lastTransaction != null) accountDB.put(key,  T.LASTTRANSACTION, lastTransaction);
+		if (this.keepHistory) accountDB.put(this.userHistoryKey(), time, spend);
+		
+		// All done. Package up the fees and return them
+		String feeamt = feeAmounts.get(assetid);
+		return new SpendFees(feeamt==null ? null : this.formatAssetValue(feeamt, asset),
+				             storagefee==null ? null : this.formatAssetValue(storagefee, asset));
 	}
-/*
-      (dolist (cell fees-amounts)
-        (push (custmsg client $FEE serverid time operation (car cell) (cdr cell))
-              fees-msgs))
-
-      ;; Compute balancehash
-      (unless (equal id serverid)
-        (let* ((acctbals (make-equal-hash)))
-          (setf (gethash assetid (get-inited-hash acct acctbals))
-                balance)
-          (when feebal
-            (setf (gethash tranfee-asset (get-inited-hash $MAIN acctbals))
-                  feebal))
-          (when tobalance
-            (setf (gethash assetid (get-inited-hash toacct acctbals))
-                  tobalance))
-          (setq balancehash
-                (balancehashmsg client time acctbals two-phase-commit-p))))
-
-      ;; Prepare storage fee related message components
-      (when percent
-        (setq storagefeemsg (custmsg client $STORAGEFEE serverid time
-                                     assetid storagefee)
-              fracmsg (custmsg client $FRACTION serverid time assetid fraction)))
-
-      ;; Send request to server, and get response
-      (setq msg spend)
-      (when feeandbal (dotcat msg "." feeandbal))
-      (dotcat msg "." balance)
-      (when tobalance (dotcat msg "." tobalance))
-      (when outboxhash (dotcat msg "." outboxhash))
-      (when balancehash (dotcat msg "." balancehash))
-      (when percent (dotcat msg "." storagefeemsg "." fracmsg))
-      (dolist (fee fees-msgs)
-        (dotcat msg "." fee))
-
-      (let* ((servermsg (process server msg)) ; *** Here's the server call ***
-             (reqs (parse parser servermsg t))
-             (msgs (make-equal-hash spend t
-                                    balance t))
-             (coupon nil)
-             encrypted-coupon)
-        (handler-case (match-serverreq client (car reqs) $ATSPEND)
-          (error ()
-            (let* ((args (match-serverreq client (car reqs)))
-                   (request (getarg $REQUEST args)))
-              (error "Spend request returned unknown message type: ~s"
-                     request))))
-        (when tobalance (setf (gethash tobalance msgs) t))
-        (when outboxhash (setf (gethash outboxhash msgs) t))
-        (when balancehash (setf (gethash balancehash msgs) t))
-        (when feeandbal
-          (when feemsg (setf (gethash feemsg msgs) t))
-          (when feebal (setf (gethash feebal msgs) t)))
-        (when percent
-          (setf (gethash storagefeemsg msgs) t
-                (gethash fracmsg msgs) t))
-        (dolist (fee fees-msgs)
-          (setf (gethash fee msgs) t))
-
-        (dolist (req reqs)
-          (let ((onemsg (get-parsemsg req))
-                (oneargs (match-serverreq client req)))
-            (cond ((equal (getarg $REQUEST oneargs) $COUPONENVELOPE)
-                   (when coupon
-                     (error "Multiple coupons returned from server"))
-                   (setq coupon onemsg
-                         encrypted-coupon (getarg $ENCRYPTEDCOUPON oneargs)))
-                  (t
-                   (let ((m (trim (get-parsemsg (getarg $MSG oneargs)))))
-                     (typecase (gethash m msgs)
-                       (null (error "Returned message wasn't sent: ~s" m))
-                       (string (error "Duplicate returned message: ~s" m)))
-                     (setf (gethash m msgs) onemsg))))))
-
-        (loop
-           for m being the hash-key using (hash-value msg) of msgs
-           do
-           (when (eq msg t)
-             (error "Message not returned from spend: ~s" m)))
-          
-        ;; Do the second phase of the commit
-        (when two-phase-commit-p
-          (setf last-transaction (send-commit-msg client time)))
-
-        ;; All is well. Commit this baby.
-        (setf (db-get db (userbalancekey client acct assetid))
-              (gethash balance msgs))
-        (when tobalance
-          (setf (db-get db (userbalancekey client toacct assetid))
-                (gethash tobalance msgs)))
-        (when outboxhash
-          (setf (db-get db (useroutboxhashkey client))
-                (gethash outboxhash msgs)))
-        (when balancehash
-          (setf (db-get db (userbalancehashkey client))
-                (gethash balancehash msgs)))
-        (let ((spend (gethash spend msgs)))
-          (when feeandbal
-            (dotcat spend "." (gethash feemsg msgs))
-            (when feebal
-              (setf (db-get db (userbalancekey client $MAIN tranfee-asset))
-                    (gethash feebal msgs))))
-          (when coupon
-            (dotcat spend "." coupon)
-            (setf (coupon client) encrypted-coupon))
-
-          (when (and (not (equal id toid))
-                     (not (equal id serverid)))
-            (setf (db-get db (useroutboxkey client time)) spend))
-          (setf (last-spend-time client) time)
-
-          (when percent
-            (setf (db-get db (userfractionkey client assetid))
-                  (gethash fracmsg msgs)))
-
-          (when last-transaction
-            (setf (db-get db (user-last-transaction-key client)) last-transaction))
-
-          (when (keep-history-p client)
-            (setf (db-get db (userhistorykey client) time) spend)))))
-    (let ((feeamt (cdr (assocequal assetid fees-amounts))))
-      `(,@(and feeamt (list :transaction-fee
-                            (format-asset-value client feeamt asset)))
-        ,@(and storagefee (list :storage-fee
-                                (format-asset-value client storagefee asset)))))
-    ))
-*/
 	
 	/**
 	 * Reload an asset from the server. Return true if the storage percent changed
@@ -2539,14 +2549,6 @@ public class Client {
 	}
 	
 /*
-(defmethod reload-asset-p ((client client) assetid)
-  "Reload an asset from the server.
-   Return true if the storage percent changed."
-  (let* ((asset (getasset client assetid))
-         (percent (asset-percent asset)))
-    (setq asset (getasset client assetid t))
-    (not (equal percent (asset-percent asset)))))
-
 (defmethod spendreject ((client client) time &optional note)
   (let ((db (db client))
         (need-init-p t))
@@ -4198,13 +4200,9 @@ public class Client {
 		db.getAccountDB().put(this.contactkey(otherid), prop, value);
 	}
 	
-/*
-(defmethod userhistorykey ((client client))
-  (userserverkey client $HISTORY))
-
-(defmethod userversionkey ((client client))
-  (userserverkey client $VERSION))
-*/
+	public String userHistoryKey() {
+		return this.userServerKey(T.HISTORY);
+	}
 	
 	public String formatAssetValue(String value, String assetid) throws ClientException {
 		return this.formatAssetValue(value, assetid, false);
@@ -4733,29 +4731,6 @@ public class Client {
 		if (hashcnt > 1) hash = Crypto.sha1(hash);
 		return new Utility.DirHash(hash==null ? "" : hash, hashcnt);
 	}
-
-	  /*
-	      (loop
-	         for acct in accts
-	         for newitems = nil
-	         for removed-names = nil
-	         for newacct = (and acctbals (gethash acct acctbals))
-	         do
-	           (when newacct
-	             (loop
-	                for assetid being the hash-key using (hash-value msg) of newacct
-	                do
-	                  (push msg newitems)
-	                  (push assetid removed-names)))
-	           (multiple-value-bind (hash1 cnt)
-	               (dirhash db (append-db-keys balancekey acct) unpacker
-	                        newitems removed-names)
-	             (when hash1
-	               (setq hash (if hash (strcat hash "." hash1) hash1))
-	               (incf hashcnt cnt))))
-	      (when (> hashcnt 1) (setq hash (sha1 hash)))
-	      (values (or hash "") hashcnt)))
-	   */
 
 	// Web client session support
 	
