@@ -2446,7 +2446,7 @@ public class Client {
 			fracmsg = this.custmsg(T.FRACTION, serverid, time, assetid, fraction);
 		}
 		
-		// Send request to server, and get response
+		// Prepare request to send to server
 		String msg = spend;
 		if (feeandbal != null) msg += '.' + feeandbal;
 		msg += '.' + balance;
@@ -2456,6 +2456,7 @@ public class Client {
 		if (percent != null) msg += '.' + storagefeemsg + '.' + fracmsg;
 		for (String fee: feeMsgs) msg += '.' + fee;
 		
+		// Send request to server and get response
 		String servermsg = server.process(msg);     // *** Here's the server call ***
 		Parser.DictList reqs;
 		try {
@@ -2463,6 +2464,8 @@ public class Client {
 		} catch (Parser.ParseException e) {
 			throw new ClientException(e);
 		}
+
+		// Store all the sent messages as keys in a map
 		StringMap msgs = new StringMap(spend, null, balance, null);
 		String coupon = null;
 		String encryptedCoupon = null;
@@ -2485,6 +2488,8 @@ public class Client {
 			msgs.put(fracmsg,  null);
 		}
 		for (String fee: feeMsgs) msgs.put(fee,  null);
+		
+		// Validate the returned messages, saving the server-signed messages in the map
 		Set<String> msgkeys = msgs.keySet();
 		for (Parser.Dict req: reqs) {
 			String onemsg = Parser.getParseMsg(req);
@@ -2500,6 +2505,7 @@ public class Client {
 				msgs.put(msg,  onemsg);
 			}
 		}
+		// Ensure that the server signed all messages
 		for (String m: msgkeys) {
 			msg = msgs.get(m);
 			if (msg == null) throw new ClientException("Message not returned from spend: " + m);
@@ -2548,56 +2554,70 @@ public class Client {
 		return !percent.equals(asset.percent);
 	}
 	
+	/**
+	 * Reject a spend.
+	 * @param time The time for the spend in the outbox
+	 * @param note may be null to put no note in the reject message
+	 * @throws ClientException
+	 */
+	public void spendReject(String time, String note) throws ClientException {
+		this.requireCurrentServer();
+		this.initServerAccts();
+		boolean needInit = true;
+		try {
+			this.spendRejectInternal(time, note);
+			needInit = false;
+		} finally {
+			if (needInit) this.forceinit();
+		}
+	}
+	
+	protected void spendRejectInternal(String time, String note) throws ClientException {
+		String toid = null;
+		ClientDB.AccountDB accountDB = db.getAccountDB();
+		String msg = accountDB.get(this.userOutboxKey(), time);
+		if (msg == null) throw new ClientException("No outbox entry at time: " + time);
+		Parser.DictList reqs;
+		try {
+			reqs = parser.parse(msg);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		for (Parser.Dict req: reqs) {
+			Parser.Dict args = this.matchServerReq(req);
+			String request = args.stringGet(T.REQUEST);
+			if (request == null) {
+				throw new ClientException("Missing request in spend message");
+			} else if(request.equals(T.ATSPEND)) {
+				Parser.Dict innerReq = (Parser.Dict)args.get(T.MSG);
+				toid = innerReq.stringGet(T.ID);
+			} else if (request.equals(T.COUPONENVELOPE)) {
+				String coupon = args.stringGet(T.ENCRYPTEDCOUPON);
+				if (coupon != null) {
+					coupon = Crypto.RSAPrivkeyDecrypt(coupon, this.privkey);
+					this.redeem(coupon);
+					return;
+				}
+			}
+		}
+		if (note != null) {
+			note = Crypto.encryptNote(db.getPubkeyDB(), note, id, toid);
+			msg = this.custmsg(T.SPENDREJECT, serverid, time, id, note);
+		} else {
+			msg = this.custmsg(T.SPENDREJECT, serverid, time, id);
+		}
+		String servermsg = server.process(msg);
+		Parser.Dict args = this.unpackServermsg(servermsg, T.INBOX);
+		time = args.stringGet(T.TIME);
+		Parser.Dict args2 = (Parser.Dict)args.get(T.MSG);
+		String msg2 = Parser.getParseMsg(args2);
+		if (!msg.trim().equals(msg2.trim())) {
+			throw new ClientException("Server return doesn't wrap request");
+		}
+		accountDB.put(this.userInboxKey(), time, servermsg);
+	}
+	
 /*
-(defmethod spendreject ((client client) time &optional note)
-  (let ((db (db client))
-        (need-init-p t))
-    (require-current-server client "In spendreject(): Server not set")
-    (init-server-accts client)
-
-    (unwind-protect
-         (with-db-lock (db (userreqkey client))
-           (prog1 (spendreject-internal client time note)
-             (setq need-init-p nil)))
-      (when need-init-p
-        (forceinit client)))))
-
-(defmethod spendreject-internal ((client client) time note)
-  (let* ((db (db client))
-         (serverid (serverid client))
-         (id (id client))
-         toid
-         (server (server client))
-         (parser (parser client))
-         (msg (or (ignore-errors (useroutbox client time))
-                  (error "No outbox entry at time: ~s" time)))
-         (reqs (parse parser msg)))
-    (dolist (req reqs)
-      (let* ((args (match-serverreq client req))
-             (request (getarg $REQUEST args)))
-        (cond ((equal request $ATSPEND)
-               (let ((msg (getarg $MSG args)))
-                 (setf toid (getarg $ID msg))))
-              ((equal request $COUPONENVELOPE)
-               (let ((coupon (getarg $ENCRYPTEDCOUPON args)))
-                 (when coupon
-                   (setq coupon (privkey-decrypt coupon (privkey client)))
-                   (return-from spendreject-internal
-                     (redeem client coupon))))))))
-    (when note
-      (setf note (encrypt-note (pubkeydb client) (list id toid) note)))
-    (setq msg (apply #'custmsg client $SPENDREJECT serverid time id
-                     (and note (list note))))
-    (let* ((servermsg (process server msg))
-           (args (with-verify-sigs-p (parser t)
-                   (unpack-servermsg client servermsg $INBOX)))
-           (time (getarg $TIME args))
-           (args2 (getarg $MSG args))
-           (msg2 (get-parsemsg args2))
-           (*msg* msg))
-      (unless (equal (trim msg2) (trim *msg*))
-        (error "Server return doesn't wrap request"))
-      (setf (db-get db (userinboxkey client) time) servermsg))))
 
 (defmethod gethistorytimes ((client client))
   (let ((db (db client)))
@@ -4162,7 +4182,13 @@ public class Client {
 
 (defmethod userbalancehash ((client client))
   (db-get (db client) (userbalancehashkey client)))
-
+*/
+	
+	public String userInboxKey() {
+		return this.userServerKey(T.INBOX);
+	}
+	
+/*
 (defmethod userinboxkey ((client client))
   (userserverkey client $INBOX))
 
