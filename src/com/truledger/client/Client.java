@@ -28,8 +28,6 @@ import android.content.Context;
 import android.net.http.AndroidHttpClient;
 
 import com.truledger.client.LispList.Keyword;
-import com.truledger.client.Utility.DirHash;
-import com.truledger.client.Utility.MsgUnpacker;
 
 /**
  * A Truledger client API. Talks the protocol of truledger.com
@@ -2617,170 +2615,277 @@ public class Client {
 		accountDB.put(this.userInboxKey(), time, servermsg);
 	}
 	
+	/**
+	 * Return the times for saved history items, sorted arithmetically by time
+	 * @return
+	 */
+	public String[] getHistoryTimes() throws ClientException {
+		this.requireCurrentServer();
+		String[] res = db.getAccountDB().contents(this.userHistoryKey());
+		Arrays.sort(res, bcm.getComparator());
+		return res;
+	}
+	
+	/**
+	 * Get the history items for the given time, all parsed and matched.
+	 * The Parser.Dict instances may have three added properties:
+	 *   T.ATREQUEST: the outer wrapper's T.REQUEST
+	 *   T.ASSETNAME: the name for messages with a T.ASSET and T.AMOUNT
+	 *   T.FORMATTEDAMOUNT: the formatted amount for messages with a T.ASSET and T.AMOUNT
+	 * @param time
+	 * @return null if there are no history items at time
+	 * @throws ClientException
+	 */
+	public Parser.DictList getHistoryItems(String time) throws ClientException {
+		this.requireCurrentServer();
+		String msg = db.getAccountDB().get(this.userHistoryKey(), time);
+		if (msg == null) return null;
+		Parser.DictList reqs;
+		try {
+			reqs = parser.parse(msg);
+			Parser.DictList res = new Parser.DictList();
+			for (Parser.Dict req: reqs) {
+				Parser.Dict args = parser.matchPattern(req);
+				Parser.Dict inner = (Parser.Dict)(args.get(T.MSG));
+				if (inner != null) {
+					String atrequest = args.stringGet(T.REQUEST);
+					args = parser.matchPattern(inner);
+					args.put(T.ATREQUEST, atrequest);
+					String assetid = args.stringGet(T.ASSET);
+					String amount = args.stringGet(T.AMOUNT);
+					if (assetid!=null && amount!=null) {
+						Asset asset = this.getAsset(assetid);
+						args.put(T.ASSETNAME, asset.name);
+						args.put(T.FORMATTEDAMOUNT, this.formatAssetValue(amount,  asset, false));
+					}
+				}
+				res.add(args);
+			}
+			return res;
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+	}
+	
+	/**
+	 * Remove the history message at time
+	 * @param time
+	 */
+	public void removeHistoryItem(String time) throws ClientException {
+		this.requireCurrentServer();
+		db.getAccountDB().put(this.userHistoryKey(), time, null);
+	}
+	
+	/**
+	 * Return the last coupon resulting from a spend.
+	 * Clear the coupon store, so you can only get the coupon once.
+	 * @return
+	 */
+	public String getCoupon() throws ClientException {
+		String coupon = this.coupon;
+		if (coupon == null) return null;
+		this.coupon = null;
+		return Crypto.RSAPrivkeyDecrypt(coupon,  this.privkey);
+	}
+	
+	/**
+	 * Return value from getInbox();
+	 * @author billstclair
+	 *
+	 */
+	public static class Inbox {
+		/**
+		 * T.SPEND, T.SPENDACCEPT, or T.SPENDREJECT
+		 */
+		String request;
+		/**
+		 * The ID of the sender of the inbox entry
+		 */
+		String id;
+		/**
+		 * The time in the server signing of the request
+		 */
+		String time;
+		/**
+		 * The time in the sender's message
+		 */
+		String msgtime;
+		/**
+		 * THe assetid of the spend
+		 */
+		String assetid;
+		/**
+		 * The name of the asset being spent
+		 */
+		String assetname;
+		/**
+		 * The amount being spend
+		 */
+		String amount;
+		/**
+		 * Formatted representation of the amount being spend
+		 */
+		String formattedAmount;
+		/**
+		 * The note that came from the sender
+		 */
+		String note;
+		/**
+		 * Used by the UI to stash replies
+		 */
+		String reply;
+		/**
+		 * Other parts of the spend message, e.g. fees
+		 */
+		Inbox[] items;
+		public Inbox() {
+			super();
+		}
+		public Inbox(String request, String id, String time, String msgtime, String assetid, String assetname,
+				String amount, String formattedAmount, String note) {
+			this.request = request;
+			this.id = id;
+			this.time = time;
+			this.msgtime = msgtime;
+			this.assetid = assetid;
+			this.assetname = assetname;
+			this.amount = amount;
+			this.formattedAmount = formattedAmount;
+			this.note = note;
+		}
+	}
+	
+	/**
+	 * A HashMap to map Inbox instances to raw message strings
+	 * @author billstclair
+	 *
+	 */
+	public static class InboxRawmap extends HashMap<Inbox, String> {
+		private static final long serialVersionUID = 7183634028262373579L;
+		public InboxRawmap() {
+			super();
+		}
+	}
+	
+	/**
+	 * Get the inbox contents, sorted by Inbox.time
+	 * @return
+	 * @throws ClientException
+	 */
+	public Inbox[] getInbox() throws ClientException {
+		return getInbox(null);
+	}
+	
+	/**
+	 * Get the inbox contents, sorted by Inbox.time
+	 * @param rawmap If non-null will map each Inbox instance to its raw message string
+	 * @return
+	 * @throws ClientException
+	 */
+	public Inbox[] getInbox(InboxRawmap rawmap) throws ClientException{
+		this.requireCurrentServer();
+		this.initServerAccts();
+		return this.getInboxInternal(rawmap);
+	}
+	
+	/**
+	 * Do the work for getInbox()
+	 * @param rawmap
+	 * @return
+	 * @throws ClientException
+	 */
+	protected Inbox[] getInboxInternal(InboxRawmap rawmap) throws ClientException {
+		String key = this.userInboxKey();
+		ClientDB.AccountDB accountDB = db.getAccountDB();
+		this.syncInbox();
+		Vector<Inbox> resv = new Vector<Inbox>();
+		for (String time: accountDB.contents(key)) {
+			String msg = accountDB.get(key, time);
+			Inbox lastItem = null;
+			Vector<Inbox> lastItems = null;
+			Parser.DictList reqs;
+			try {
+				reqs = parser.parse(msg);
+			} catch (Parser.ParseException e) {
+				throw new ClientException(e);
+			}
+			for (Parser.Dict req: reqs) {
+				Parser.Dict args = this.matchServerReq(req);
+				String argstime = args.stringGet(T.TIME);
+				if (!(argstime==null || time.equals(argstime))) {
+					throw new ClientException("Inbox message timestamp mismatch");
+				}
+				args = (Parser.Dict)args.get(T.MSG);
+				String request = args.stringGet(T.REQUEST);
+				String id = args.stringGet(T.CUSTOMER);
+				String msgtime = args.stringGet(T.TIME);
+				String note = args.stringGet(T.NOTE);
+				String assetid = null;
+				String amount = null;
+				String assetname = null;
+				String formattedAmount = null;
+				if (request.equals(T.SPEND) || request.equals(T.TRANFEE)) {
+					assetid = args.stringGet(T.ASSET);
+					amount = args.stringGet(T.AMOUNT);
+					Asset asset = null;
+					boolean incnegs = false;
+					try {
+						asset = this.getAsset(assetid);
+					} catch (Exception e) {
+					}
+					if (asset != null) {
+						assetname = asset.name;
+						incnegs = !serverid.equals(args.stringGet(T.CUSTOMER));
+						formattedAmount = this.formatAssetValue(amount, asset, incnegs);
+					}
+				} else if (request.equals(T.SPENDACCEPT)|| request.equals(T.SPENDREJECT)) {
+					// To do: pull in data from outbox to get amounts
+				} else {
+					throw new ClientException("Bad request in inbox: " + request);
+				}
+				try {
+					note = Crypto.decryptNote(this.id, this.privkey, note);
+				} catch (Exception e) {
+				}
+				Inbox item = new Inbox(request, id, time, msgtime, assetid, assetname, amount, formattedAmount, note);
+				if (request.equals(T.SPEND)) {
+					resv.add(item);
+					lastItem = item;
+				} else if (request.equals(T.TRANFEE)) {
+					if (lastItem == null) throw new ClientException("tranfee without matching spend");
+					if (lastItems == null) lastItems = new Vector<Inbox>();
+					lastItems.add(item);
+				} else {
+					resv.add(item);
+					if (lastItem != null) {
+						if (lastItems != null) {
+							lastItem.items = lastItems.toArray(new Inbox[lastItems.size()]);
+							lastItems = null;
+						}
+						lastItem = null;
+					}
+				}
+				if (rawmap != null) rawmap.put(item,  msg);
+			}
+		}
+		Inbox[] res = resv.toArray(new Inbox[resv.size()]);
+		Arrays.sort(res, new Comparator<Inbox>() {
+			public int compare(Inbox i1, Inbox i2) {
+				return Client.this.bcm.compare(i1.time, i2.time);
+			}
+		});
+		return res;
+	}
+	
+	/**
+	 * Sync inbox with server
+	 * @throws ClientException
+	 */
+	public void syncInbox() throws ClientException {
+		// TO DO
+	}
+	
 /*
-
-(defmethod gethistorytimes ((client client))
-  (let ((db (db client)))
-    (require-current-server client "In gethistorytimes(): Server not set")
-    (sort (db-contents db (userhistorykey client))
-          (lambda (x y) (< (bccomp y x) 0)))))
-
-(defmethod gethistoryitems ((client client) time)
-  "Get the history items for $time.
-   Return nil if there is no corresponding item.
-   Otherwise, return a list of matched inner message hash tables."
-  (let ((db (db client))
-        (parser (parser client)))
-    (require-current-server client "In gethistoryitems(): Server not set")
-    (let* ((msg (db-get db (userhistorykey client) time)))
-      (when msg
-        (let ((reqs (parse parser msg))
-              res)
-          (dolist (req reqs)
-            (let* ((args (match-pattern parser req))
-                   (inner (getarg $MSG args)))
-              (when inner
-                (let* ((atrequest (getarg $REQUEST args)))
-                  (setq args (match-pattern parser inner))
-                  (setf (getarg $ATREQUEST args) atrequest)))
-              (let* ((assetid (getarg $ASSET args))
-                     (amount (getarg $AMOUNT args)))
-                (when (and assetid amount)
-                  (let ((asset (getasset client assetid)))
-                         (setf (getarg $ASSETNAME args) (asset-name asset)
-                               (getarg $FORMATTEDAMOUNT args)
-                               (format-asset-value client amount asset nil)))))
-              (push args res)))
-          (nreverse res))))))
-
-(defmethod removehistoryitem ((client client) time)
-  "Remove a history item"
-  (let ((db (db client)))
-    (require-current-server client "In removehistoryitem(): Server not set")
-    (setf (db-get db (userhistorykey client) time) nil)))
-
-(defun history-key (client timestamp)
-  (sha1 (strcat "history" (id client) timestamp)))
-
-(defmethod %get-saved-history ((client client) id)
-  (ignore-errors
-    (readdata client (history-key client id))))
-
-(defmethod (setf %get-saved-history) (value client id)
-  (writedata client (history-key client id) (or value ""))
-  value)
-
-(defmethod getcoupon ((client client))
-  "Return the last coupon resulting from a spend.
-   Clear the coupon store, so you can only get the coupon once."
-  (let ((coupon (coupon client)))
-    (setf (coupon client) nil)
-    (and coupon (privkey-decrypt coupon (privkey client)))))
-
-(defstruct inbox
-  request
-  id
-  time
-  msgtime
-  assetid
-  assetname
-  amount
-  formattedamount
-  note
-  reply                                 ;used by client-web.lisp
-  items)
-
-(defmethod getinbox ((client client) &optional includeraw)
-  "Get the inbox contents.
-   Returns a list of INBOX instances, sorted by INBOX-TIME.
-   If INCLUDERAW is true, will return as a second value a
-   hash table mapping those instances to the raw message
-   strings from which they came.
-   INBOX-REQUEST is $SPEND, $SPENDACCEPT, or $SPENDREJECT,
-   INBOX-ID is the ID of the sender of the inbox entry,
-   INBOX-TIME is the timestamp from the server on the inbox entry,
-   INBOX-MSGTIME is the timestamp in the sender's message,
-   INBOX-ASSETID & INBOX-ASSETNAME describe the asset being transferred,
-   INBOX-AMOUNT is the amount of the asset being transferred, as an integer,
-   INBOX-FORMATTEDAMOUNT is the amount as a decimal number with the scale
-   and precision applied,
-   INBOX-NOTE is the note that came from the sender
-   INBOX-ITEMS is other items from the same inbox entry, e.g. fees."
-  (let ((db (db client)))
-    (require-current-server client "In getinbox(): Server not set")
-    (init-server-accts client)
-    (with-db-lock (db (userreqkey client))
-      (getinbox-internal client includeraw))))
-
-(defmethod getinbox-internal ((client client) includeraw)
-  (let ((db (db client))
-        (parser (parser client))
-        (serverid (serverid client))
-        (res nil)
-        (msghash (and includeraw (make-hash-table :test #'eq)))
-        (key (userinboxkey client)))
-    (sync-inbox client)
-    (dolist (time (db-contents db key))
-      (let* ((msg (db-get db key time))
-             (reqs (parse parser msg))
-             last-item)
-        (dolist (req reqs)
-          (let* ((args (match-serverreq client req))
-                 (argstime (getarg $TIME args)))
-            (unless (or (null argstime) (equal argstime time))
-              (error "Inbox message timestamp mismatch"))
-            (setq args (getarg $MSG args))
-            (let ((request (getarg $REQUEST args))
-                  (id (getarg $CUSTOMER args))
-                  (msgtime (getarg $TIME args))
-                  (note (getarg $NOTE args))
-                  assetid
-                  amount
-                  assetname
-                  formattedamount)
-              (cond ((or (equal request $SPEND)
-                         (equal request $TRANFEE))
-                     (setq assetid (getarg $ASSET args)
-                           amount (getarg $AMOUNT args))
-                     (let ((asset (ignore-errors (getasset client assetid)))
-                           incnegs-p)
-                       (when asset
-                         (setq assetname (asset-name asset)
-                               incnegs-p (not (equal (getarg $CUSTOMER args)
-                                                     serverid))
-                               formattedamount (format-asset-value
-                                                client amount asset incnegs-p)))))
-                    ((or (equal request $SPENDACCEPT)
-                         (equal request $SPENDREJECT))
-                     ;; To do: Pull in data from outbox to get amounts
-                     )
-                    (t (error "Bad request in inbox: ~s" request)))
-              (ignore-errors
-                (setf note (decrypt-note (id client) (privkey client) note)))
-              (let ((item (make-inbox :request request
-                                      :id id
-                                      :time time
-                                      :msgtime msgtime
-                                      :assetid assetid
-                                      :assetname assetname
-                                      :amount amount
-                                      :formattedamount formattedamount
-                                      :note note)))
-                (cond ((equal request $SPEND)
-                       (push item res)
-                       (setq last-item item))
-                      ((equal request $TRANFEE)
-                       (unless last-item
-                         (error "tranfee without matching spend"))
-                       (push item (inbox-items last-item)))
-                      (t (push item res)
-                         (setq last-item nil)))
-              (when (and includeraw (eq (car res) item))
-                (setf (gethash item msghash) msg))))))))
-    (values
-     (sort res (lambda (t1 t2) (< (bccomp t1 t2) 0)) :key #'inbox-time)
-     msghash)))
-
 (defmethod sync-inbox ((client clie)nt))
   "Synchronize the current customer inbox with the current server.
    Assumes that there IS a current user and server.

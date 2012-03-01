@@ -1,6 +1,7 @@
 package com.truledger.client;
 
 import java.math.BigInteger;
+import java.util.Comparator;
 
 /**
  * Arbitrary precision decimal arithmetic
@@ -17,6 +18,11 @@ public class BCMath {
 	 * The number of digits after the decimal point
 	 */
 	public int precision = 0;
+	
+	/**
+	 * A comparator to sort this instance's numbers
+	 */
+	public Comparator<String> comparator = null;
 	
 	/**
 	 * Default constructor. Initializes precision to 0.
@@ -39,6 +45,21 @@ public class BCMath {
 	public static BCMath bcm() {
 		if (bcm == null) bcm = new BCMath();
 		return bcm;
+	}
+	
+	/**
+	 * Return a Comparator for comparing number strings with this instance's precision
+	 * @return
+	 */
+	public Comparator<String> getComparator() {
+		if (this.comparator == null) {
+			this.comparator = new Comparator<String>() {
+				public int compare(String x, String y) {
+					return BCMath.this.compare(x, y);
+				}
+			};
+		}
+		return this.comparator;
 	}
 
 	/**
