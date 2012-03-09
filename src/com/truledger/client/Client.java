@@ -2878,66 +2878,73 @@ public class Client {
 	}
 	
 	/**
-	 * Sync inbox with server
+	 * Sync inbox with server.
+	 * Assumes that there IS a current user and server.
 	 * @throws ClientException
 	 */
-	public void syncInbox() throws ClientException {
-		// TO DO
+	protected void syncInbox() throws ClientException {
+		try {
+			this.syncInboxInternal();
+		} catch (ClientException e) {
+			this.forceinit();
+			this.syncInboxInternal();
+		}
+	}
+	
+	/**
+	 * Do the work for syncInbox()
+	 * @throws ClientException
+	 */
+	protected void syncInboxInternal() throws ClientException {
+		String msg = this.custmsg(T.GETINBOX, serverid, this.getreq());
+		String servermsg = server.process(msg);
+		Parser.DictList reqs;
+		try {
+			reqs = parser.parse(servermsg);
+		} catch (Parser.ParseException e) {
+			throw new ClientException(e);
+		}
+		StringMap inbox = new StringMap();
+		Vector<String> times = new Vector<String>();
+		StringMap storageFees = new StringMap();
+		String lastTime = null;
+		for (Parser.Dict req: reqs) {
+			Parser.Dict args = this.matchServerReq(req);
+			servermsg = Parser.getParseMsg(req);
+			String request = args.stringGet(T.REQUEST);
+			if (request == null) {
+				throw new ClientException("No request in server message.");
+			} else if (request.equals(T.ATGETINBOX)) {
+				String retmsg = Parser.getParseMsg((Parser.Dict)args.get(T.MSG));
+				if (!(retmsg.trim().equals(msg.trim()))) {
+					throw new ClientException("getinbox return doesn't wrap message sent");
+				}
+				lastTime = null;
+			} else if (request.equals(T.INBOX)) {
+				String time = args.stringGet(T.TIME);
+				if (inbox.get(time) != null) {
+					throw new ClientException ("getinbox return included multiple entries for time: " + time);
+				}
+				inbox.put(time, servermsg);
+			} else if (request.equals(T.ATTRANFEE)) {
+				if (lastTime == null) {
+					throw new ClientException("In getinbox return: @tranfee not after inbox"); 
+				}
+				inbox.put(lastTime,  inbox.get(lastTime) + '.' + servermsg);
+				lastTime = null;
+			} else if (request.equals(T.TIME)) {
+				times.add(args.stringGet(T.TIME));
+				lastTime = null;
+			} else if (request.equals(T.STORAGEFEE)) {
+				String assetid = args.stringGet(T.ASSET);
+				storageFees.put(assetid,  servermsg);
+			} else if (!request.equals(T.COUPONNUMBERHASH)) {
+				throw new ClientException("Unknown request in getinbox return: " + request);
+			}
+		}
 	}
 	
 /*
-(defmethod sync-inbox ((client clie)nt))
-  "Synchronize the current customer inbox with the current server.
-   Assumes that there IS a current user and server.
-   Does no database locking."
-  (handler-case (sync-inbox-internal client)
-    (error ()
-      (forceinit client)
-      (sync-inbox-internal client))))
-
-(defmethod sync-inbox-internal ((client client))
-  (let* ((db (db client))
-         (serverid (serverid client))
-         (parser (parser client))
-         (server (server client))
-         (msg (custmsg client $GETINBOX serverid (getreq client)))
-         (*msg* msg)
-         (servermsg (process server msg))
-         (reqs (parse parser servermsg))
-         (inbox (make-equal-hash))
-         (times nil)
-         (storagefees (make-equal-hash))
-         (last-time nil))
-    (dolist (req reqs)
-      (let* ((args (match-serverreq client req))
-             (servermsg (get-parsemsg req))
-             (request (getarg $REQUEST args)))
-        (cond ((equal request $ATGETINBOX)
-               (let ((retmsg (get-parsemsg (getarg $MSG args))))
-                 (unless (equal (trim retmsg) (trim *msg*))
-                   (error "getinbox return doesn't wrap message sent"))
-                 (setq last-time nil)))
-              ((equal request $INBOX)
-               (let ((time (getarg $TIME args)))
-                 (when (gethash time inbox)
-                   (error "getinbox return included multiple entries for time: ~s"
-                          time))
-                 (setf (gethash time inbox) servermsg
-                       last-time time)))
-              ((equal request $ATTRANFEE)
-               (unless last-time
-                 (error "In getinbox return: @tranfee not after inbox"))
-               (setf (gethash last-time inbox)
-                     (strcat (gethash last-time inbox) "." servermsg)
-                     last-time nil))
-              ((equal request $TIME)
-               (push (getarg $TIME args) times)
-               (setq last-time nil))
-              ((equal request $STORAGEFEE)
-               (let ((assetid (getarg $ASSET args)))
-                 (setf (gethash assetid storagefees) servermsg)))
-              ((not (equal request $COUPONNUMBERHASH))
-               (error "Unknown request in getinbox return: ~s" request)))))
 
     (let* ((key (userinboxkey client))
            (keys (db-contents db key)))
